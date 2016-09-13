@@ -441,6 +441,7 @@ struct perftest_parameters {
 	int				disable_fcs;
 	int				flows;
 	int				flows_burst;
+        int                             wait_keystroke;
 };
 
 struct report_options {
