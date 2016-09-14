@@ -1341,10 +1341,12 @@ int ctx_init(struct pingpong_context *ctx, struct perftest_parameters *user_para
 
 	if (create_mr(ctx, user_param)) {
 		fprintf(stderr, "Failed to create MR\n");
+                return FAILURE;
 	}
 
 	if (create_cqs(ctx, user_param)) {
 		fprintf(stderr, "Failed to create CQs\n");
+                return FAILURE;
 	}
 
 	#ifdef HAVE_XRCD
