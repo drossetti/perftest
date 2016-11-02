@@ -603,7 +603,9 @@ static void init_perftest_params(struct perftest_parameters *user_param)
 	user_param->rate_limit_type	= DISABLE_RATE_LIMIT;
 	user_param->is_rate_limit_type  = 0;
 	user_param->output		= -1;
+	#ifdef HAVE_CUDA
 	user_param->use_cuda		= 0;
+	#endif
 	user_param->mmap_file		= NULL;
 	user_param->mmap_offset		= 0;
 	user_param->iters_per_port[0]	= 0;
@@ -1534,7 +1536,9 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 	static int retry_count_flag = 0;
 	static int dont_xchg_versions_flag = 0;
 	static int use_exp_flag = 0;
+	#ifdef HAVE_CUDA
 	static int use_cuda_flag = 0;
+	#endif
 	static int mmap_file_flag = 0;
 	static int mmap_offset_flag = 0;
 	static int ipv6_flag = 0;
@@ -1630,7 +1634,9 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 			{ .name = "flow_label",		.has_arg = 1, .flag = &flow_label_flag, .val = 1},
 			{ .name = "retry_count",	.has_arg = 1, .flag = &retry_count_flag, .val = 1},
 			{ .name = "dont_xchg_versions",	.has_arg = 0, .flag = &dont_xchg_versions_flag, .val = 1},
+			#ifdef HAVE_CUDA
 			{ .name = "use_cuda",		.has_arg = 0, .flag = &use_cuda_flag, .val = 1},
+			#endif
 			{ .name = "mmap",		.has_arg = 1, .flag = &mmap_file_flag, .val = 1},
 			{ .name = "mmap-offset",	.has_arg = 1, .flag = &mmap_offset_flag, .val = 1},
 			{ .name = "ipv6",		.has_arg = 0, .flag = &ipv6_flag, .val = 1},
@@ -2051,10 +2057,11 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 	if (use_res_domain_flag) {
 		user_param->use_res_domain = 1;
 	}
-
+	#ifdef HAVE_CUDA
 	if (use_cuda_flag) {
 		user_param->use_cuda = 1;
 	}
+	#endif
 	if (report_both_flag) {
 		user_param->report_both = 1;
 	}
