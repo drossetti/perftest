@@ -1284,6 +1284,7 @@ int create_single_mr(struct pingpong_context *ctx, struct perftest_parameters *u
 
 	/* Initialize buffer with random numbers except in WRITE_LAT test that it 0's */
 	#ifdef HAVE_CUDA
+        // CUDA memory pointers cannot be de-referenced on CPU code
 	if (!user_param->use_cuda)
 	#endif
 	{
