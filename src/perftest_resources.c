@@ -1252,6 +1252,7 @@ int create_single_mr(struct pingpong_context *ctx, struct perftest_parameters *u
 	/* Initialize buffer with random numbers */
 	srand(time(NULL));
 	#ifdef HAVE_CUDA
+        // CUDA memory pointers cannot be de-referenced on CPU code
 	if (!user_param->use_cuda)
         #endif
 	for (i = 0; i < ctx->buff_size; i++) {
