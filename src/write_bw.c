@@ -221,10 +221,12 @@ int main(int argc, char *argv[])
 		printf((user_param.cpu_util_data.enable ? RESULT_EXT_CPU_UTIL : RESULT_EXT));
 	}
 
+	#ifdef HAVE_CUDA
         if (user_param.wait_keystroke) {
             fprintf(stdout, ">>> ATTENTION: press a key to go ahead <<<\n");
             int c = getchar();
         }
+	#endif
 
 	/* For half duplex tests, server just waits for client to exit */
 	if (user_param.machine == SERVER && !user_param.duplex) {

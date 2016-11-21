@@ -468,8 +468,10 @@ static void usage(const char *argv0, VerbType verb, TestType tst, int connection
 
 	}
 
+	#ifdef HAVE_CUDA
 	printf("      --wait_keystroke ");
 	printf(" Wait keystroke before starting test\n");
+	#endif
 
 	putchar('\n');
 }
@@ -1559,7 +1561,9 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 	static int disable_fcs_flag = 0;
 	static int flows_flag = 0;
 	static int flows_burst_flag = 0;
+	#ifdef HAVE_CUDA
         static int wait_keystroke_flag = 0;
+	#endif
 
 	char *server_ip = NULL;
 	char *client_ip = NULL;
@@ -1620,7 +1624,9 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 			{ .name = "client",		.has_arg = 0, .val = 'P' },
 			{ .name = "mac_fwd",		.has_arg = 0, .val = 'v' },
 			{ .name = "use_rss",		.has_arg = 0, .val = 'G' },
+			#ifdef HAVE_CUDA
 			{ .name = "wait_keystroke",     .has_arg = 0, .flag = &wait_keystroke_flag, .val = 1 },
+			#endif
 			{ .name = "run_infinitely",	.has_arg = 0, .flag = &run_inf_flag, .val = 1 },
 			{ .name = "report_gbits",	.has_arg = 0, .flag = &report_fmt_flag, .val = 1},
 			{ .name = "use-srq",		.has_arg = 0, .flag = &srq_flag, .val = 1},
@@ -2039,9 +2045,11 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 	if (tcp_flag) {
 		user_param->tcp = 1;
 	}
+	#ifdef HAVE_CUDA
         if (wait_keystroke_flag) {
                 user_param->wait_keystroke = 1;
         }
+	#endif
 	if (run_inf_flag) {
 		user_param->test_method = RUN_INFINITELY;
 	}

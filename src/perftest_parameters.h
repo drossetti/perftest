@@ -441,7 +441,9 @@ struct perftest_parameters {
 	int				disable_fcs;
 	int				flows;
 	int				flows_burst;
+	#ifdef HAVE_CUDA
         int                             wait_keystroke;
+	#endif
 };
 
 struct report_options {
