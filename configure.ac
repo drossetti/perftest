@@ -21,7 +21,7 @@ m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
 AC_SUBST(MAJOR_VERSION)
 AC_SUBST(MINOR_VERSION)
 
-AC_ARG_VAR(CUDA_H_PATH, help-string)
+AC_ARG_VAR(CUDA_H_PATH, path to CUDA Toolkit include directory (enables CUDA support))
 AC_ARG_VAR(RANLIB, ranlib tool)
 
 AC_ARG_ENABLE([verbs_exp],
@@ -235,7 +235,7 @@ fi
 
 if [test "$CUDA_H_PATH" ]; then
 	AC_DEFINE([HAVE_CUDA], [1], [Enable CUDA feature])
-	AC_DEFINE_UNQUOTED([CUDA_PATH], "$CUDA_H_PATH" , [Enable CUDA feature])
+	AC_DEFINE_UNQUOTED([CUDA_PATH], "$CUDA_H_PATH" , [Path to CUDA toolkit include directory])
 	LIBS=$LIBS" -lcuda"
 fi
 
