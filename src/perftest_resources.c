@@ -57,7 +57,7 @@ struct check_alive_data check_alive_data;
 static CUdevice cuDevice;
 static CUcontext cuContext;
 
-static int pp_init_gpu(struct pingpong_context *ctx, size_t _size)
+static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, int use_um)
 {
 	const size_t gpu_page_size = 64*1024;
 	size_t size = (_size + gpu_page_size - 1) & ~(gpu_page_size - 1);
@@ -108,17 +108,21 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size)
 	}
 
 	printf("cuMemAlloc() of a %zd bytes GPU buffer\n", size);
-	CUdeviceptr d_A;
-	error = cuMemAlloc(&d_A, size);
-	if (error != CUDA_SUCCESS) {
-		printf("cuMemAlloc error=%d\n", error);
-		return 1;
-	}
-	printf("allocated GPU buffer address at %016llx pointer=%p\n", d_A,
-	       (void *) d_A);
-	ctx->buf[0] = (void*)d_A;
+        CUdeviceptr d_A;
+        if (use_um) {
+                error = cuMemAllocManaged(&d_A, size, CU_MEM_ATTACH_GLOBAL);
+        } else {
+                error = cuMemAlloc(&d_A, size);
+        }
+        if (error != CUDA_SUCCESS) {
+                printf("CUDA allocation failed with error=%d\n", error);
+                ctx->buf[0] = NULL;
+                return 1;
+        }
+        printf("allocated GPU buffer address at %016llx\n", d_A);
+        ctx->buf[0] = (void*)d_A;
 
-	return 0;
+        return 0;
 }
 
 static int pp_free_gpu(struct pingpong_context *ctx)
@@ -1182,7 +1186,7 @@ int create_single_mr(struct pingpong_context *ctx, struct perftest_parameters *u
 	#ifdef HAVE_CUDA
 	if (user_param->use_cuda) {
 		ctx->is_contig_supported = FAILURE;
-		if(pp_init_gpu(ctx, ctx->buff_size)) {
+		if(pp_init_gpu(ctx, ctx->buff_size, user_param->use_cuda_um)) {
 			fprintf(stderr, "Couldn't allocate work buf.\n");
 			return FAILURE;
 		}

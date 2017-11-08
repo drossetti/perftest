@@ -442,6 +442,7 @@ struct perftest_parameters {
 	int				raw_qos;
 	#ifdef HAVE_CUDA
 	int				use_cuda;
+	int				use_cuda_um;
 	#endif
 	char				*mmap_file;
 	unsigned long			mmap_offset;
