@@ -433,6 +433,8 @@ static void usage(const char *argv0, VerbType verb, TestType tst, int connection
 	#ifdef HAVE_CUDA
 	printf("      --use_cuda ");
 	printf(" Use CUDA lib for GPU-Direct testing.\n");
+	printf("      --use_cuda_um ");
+	printf(" Use CUDA Unified Memory for GPU-Direct testing, needs --use_cuda.\n");
 	#endif
 
 
@@ -605,6 +607,7 @@ static void init_perftest_params(struct perftest_parameters *user_param)
 	user_param->output		= -1;
 	#ifdef HAVE_CUDA
 	user_param->use_cuda		= 0;
+	user_param->use_cuda_um		= 0;
 	#endif
 	user_param->mmap_file		= NULL;
 	user_param->mmap_offset		= 0;
@@ -1202,6 +1205,12 @@ static void force_dependecies(struct perftest_parameters *user_param)
 		fprintf(stderr,"You cannot use CUDA and an mmap'd file at the same time\n");
 		exit(1);
 	}
+
+	if (user_param->use_cuda_um && !user_param->use_cuda) {
+            printf(RESULT_LINE);
+            fprintf(stderr," Need to enable CUDA support for CUDA Managed Memory\n");
+            exit(1);
+	}
 	#endif
 
 	if ( (user_param->connection_type == UD) && (user_param->inline_size > MAX_INLINE_UD) ) {
@@ -1538,6 +1547,7 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 	static int use_exp_flag = 0;
 	#ifdef HAVE_CUDA
 	static int use_cuda_flag = 0;
+	static int use_cuda_um_flag = 0;
 	#endif
 	static int mmap_file_flag = 0;
 	static int mmap_offset_flag = 0;
@@ -1636,6 +1646,7 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 			{ .name = "dont_xchg_versions",	.has_arg = 0, .flag = &dont_xchg_versions_flag, .val = 1},
 			#ifdef HAVE_CUDA
 			{ .name = "use_cuda",		.has_arg = 0, .flag = &use_cuda_flag, .val = 1},
+			{ .name = "use_cuda_um",	.has_arg = 0, .flag = &use_cuda_um_flag, .val = 1},
 			#endif
 			{ .name = "mmap",		.has_arg = 1, .flag = &mmap_file_flag, .val = 1},
 			{ .name = "mmap-offset",	.has_arg = 1, .flag = &mmap_offset_flag, .val = 1},
@@ -2060,6 +2071,9 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 	#ifdef HAVE_CUDA
 	if (use_cuda_flag) {
 		user_param->use_cuda = 1;
+	}
+	if (use_cuda_um_flag) {
+		user_param->use_cuda_um = 1;
 	}
 	#endif
 	if (report_both_flag) {
