@@ -1302,14 +1302,6 @@ static void force_dependecies(struct perftest_parameters *user_param)
 	#endif
 
 	#ifdef HAVE_CUDA
-	if (user_param->use_cuda) {
-		if (user_param->tst != BW) {
-			printf(RESULT_LINE);
-			fprintf(stderr," Perftest supports CUDA only in BW tests\n");
-			exit(1);
-		}
-	}
-
 	if (user_param->use_cuda && user_param->mmap_file != NULL) {
 		printf(RESULT_LINE);
 		fprintf(stderr,"You cannot use CUDA and an mmap'd file at the same time\n");
@@ -1667,19 +1659,16 @@ static void ctx_set_max_inline(struct ibv_context *context,struct perftest_param
 	}
 
 	if (user_param->inline_size == DEF_INLINE) {
-
-		if (user_param->tst ==LAT) {
+		user_param->inline_size = 0;
+		if (user_param->tst ==LAT && user_param->use_cuda == 0) {
 
 			switch(user_param->verb) {
-
 				case WRITE: user_param->inline_size = (user_param->connection_type == DC)? DEF_INLINE_DC : DEF_INLINE_WRITE; break;
 				case SEND : user_param->inline_size = (user_param->connection_type == DC)? DEF_INLINE_DC : (user_param->connection_type == UD)? DEF_INLINE_SEND_UD :
 					    ((user_param->connection_type == XRC) ? DEF_INLINE_SEND_XRC : DEF_INLINE_SEND_RC_UC) ; break;
 				default   : user_param->inline_size = 0;
 			}
 
-		} else {
-			user_param->inline_size = 0;
 		}
 	}
 
