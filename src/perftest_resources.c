@@ -83,15 +83,19 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, int use_um)
 	else
 		printf("There are %d devices supporting CUDA, picking first...\n", deviceCount);
 
-	int devID = 0;
+	int gpuID = 0;
 
-	/* pick up device with zero ordinal (default, or devID) */
-	CUCHECK(cuDeviceGet(&cuDevice, devID));
+	/* pick up device with zero ordinal (default, or gpuID) */
+	CUCHECK(cuDeviceGet(&cuDevice, gpuID));
 
 	char name[128];
-	CUCHECK(cuDeviceGetName(name, sizeof(name), devID));
-	printf("[pid = %d, dev = %d] device name = [%s]\n", getpid(), cuDevice, name);
-	printf("creating CUDA Ctx\n");
+	int pciDomainID, pciBusID, pciDeviceID;
+	CUCHECK(cuDeviceGetName(name, sizeof(name), cuDevice));
+	CUCHECK(cuDeviceGetAttribute(&pciDomainID, CU_DEVICE_ATTRIBUTE_PCI_DOMAIN_ID, cuDevice));
+	CUCHECK(cuDeviceGetAttribute(&pciBusID,    CU_DEVICE_ATTRIBUTE_PCI_BUS_ID,    cuDevice));
+	CUCHECK(cuDeviceGetAttribute(&pciDeviceID, CU_DEVICE_ATTRIBUTE_PCI_DEVICE_ID, cuDevice));
+        printf("[pid=%d id=%d dev=%d] GPU name=[%s] PCI Domain/Bus/Dev: %d/%d/%d\n", 
+	       getpid(), gpuID, cuDevice, name, pciDomainID, pciBusID, pciDeviceID);
 
 	/* Create context */
 	error = cuCtxCreate(&cuContext, CU_CTX_MAP_HOST, cuDevice);
