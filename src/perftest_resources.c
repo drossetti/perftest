@@ -90,7 +90,7 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, int use_um)
 	CUCHECK(cuDeviceGetAttribute(&pciDomainID, CU_DEVICE_ATTRIBUTE_PCI_DOMAIN_ID, cuDevice));
 	CUCHECK(cuDeviceGetAttribute(&pciBusID,    CU_DEVICE_ATTRIBUTE_PCI_BUS_ID,    cuDevice));
 	CUCHECK(cuDeviceGetAttribute(&pciDeviceID, CU_DEVICE_ATTRIBUTE_PCI_DEVICE_ID, cuDevice));
-        printf("[pid=%d id=%d dev=%d] GPU name=[%s] PCI Domain/Bus/Dev: %d/%d/%d\n", 
+        printf("[pid=%d id=%d dev=%d] GPU name=[%s] PCI Domain/Bus/Dev: %04x/%02x/%02x\n", 
 	       getpid(), gpuID, cuDevice, name, pciDomainID, pciBusID, pciDeviceID);
 
 	/* Create context */
@@ -131,7 +131,7 @@ static int pp_free_gpu(struct pingpong_context *ctx)
 	CUdeviceptr d_A = (CUdeviceptr) ctx->buf[0];
 
 	printf("deallocating RX GPU buffer\n");
-	cuMemFree(d_A);
+	CUCHECK(cuMemFree(d_A));
 	d_A = 0;
 
 	printf("destroying current CUDA Ctx\n");
