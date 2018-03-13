@@ -1664,7 +1664,11 @@ static void ctx_set_max_inline(struct ibv_context *context,struct perftest_param
 
 	if (user_param->inline_size == DEF_INLINE) {
 		user_param->inline_size = 0;
-		if (user_param->tst ==LAT && user_param->use_cuda == 0) {
+		if (user_param->tst == LAT
+                #ifdef HAVE_CUDA
+                    && user_param->use_cuda == 0
+                #endif
+                    ) {
 
 			switch(user_param->verb) {
 				case WRITE: user_param->inline_size = (user_param->connection_type == DC)? DEF_INLINE_DC : DEF_INLINE_WRITE; break;
