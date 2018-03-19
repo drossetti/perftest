@@ -389,7 +389,10 @@ struct perftest_parameters {
 	int				buff_size;
 	int             		pkey_index;
 	int				raw_qos;
+	#ifdef HAVE_CUDA
 	int				use_cuda;
+	int				use_cuda_um;
+	#endif
 	char				*mmap_file;
 	unsigned long			mmap_offset;
 	/* New test params format pilot. will be used in all flags soon,. */

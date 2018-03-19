@@ -433,6 +433,8 @@ static void usage(const char *argv0, VerbType verb, TestType tst, int connection
 	#ifdef HAVE_CUDA
 	printf("      --use_cuda ");
 	printf(" Use CUDA lib for GPU-Direct testing.\n");
+	printf("      --use_cuda_um ");
+	printf(" Use CUDA Unified Memory for GPU-Direct testing, needs --use_cuda.\n");
 	#endif
 
 
@@ -603,7 +605,10 @@ static void init_perftest_params(struct perftest_parameters *user_param)
 	user_param->rate_limit_type	= DISABLE_RATE_LIMIT;
 	user_param->is_rate_limit_type  = 0;
 	user_param->output		= -1;
+	#ifdef HAVE_CUDA
 	user_param->use_cuda		= 0;
+	user_param->use_cuda_um		= 0;
+	#endif
 	user_param->mmap_file		= NULL;
 	user_param->mmap_offset		= 0;
 	user_param->iters_per_port[0]	= 0;
@@ -1036,6 +1041,10 @@ static void force_dependecies(struct perftest_parameters *user_param)
 		}
 	}
 
+	if (user_param->use_odp) {
+		fprintf(stdout," ODP enabled\n");
+	}
+
 	if(user_param->verb == ATOMIC && user_param->use_odp) {
 		printf(RESULT_LINE);
 		fprintf(stderr," ODP does not support ATOMICS for now\n");
@@ -1187,18 +1196,16 @@ static void force_dependecies(struct perftest_parameters *user_param)
 	#endif
 
 	#ifdef HAVE_CUDA
-	if (user_param->use_cuda) {
-		if (user_param->tst != BW) {
-			printf(RESULT_LINE);
-			fprintf(stderr," Perftest supports CUDA only in BW tests\n");
-			exit(1);
-		}
-	}
-
 	if (user_param->use_cuda && user_param->mmap_file != NULL) {
 		printf(RESULT_LINE);
 		fprintf(stderr,"You cannot use CUDA and an mmap'd file at the same time\n");
 		exit(1);
+	}
+
+	if (user_param->use_cuda_um && !user_param->use_cuda) {
+            printf(RESULT_LINE);
+            fprintf(stderr," Need to enable CUDA support for CUDA Managed Memory\n");
+            exit(1);
 	}
 	#endif
 
@@ -1490,19 +1497,20 @@ static void ctx_set_max_inline(struct ibv_context *context,struct perftest_param
 	}
 
 	if (user_param->inline_size == DEF_INLINE) {
-
-		if (user_param->tst ==LAT) {
+		user_param->inline_size = 0;
+		if (user_param->tst == LAT
+                #ifdef HAVE_CUDA
+                    && user_param->use_cuda == 0
+                #endif
+                    ) {
 
 			switch(user_param->verb) {
-
 				case WRITE: user_param->inline_size = (user_param->connection_type == DC)? DEF_INLINE_DC : DEF_INLINE_WRITE; break;
 				case SEND : user_param->inline_size = (user_param->connection_type == DC)? DEF_INLINE_DC : (user_param->connection_type == UD)? DEF_INLINE_SEND_UD :
 					    ((user_param->connection_type == XRC) ? DEF_INLINE_SEND_XRC : DEF_INLINE_SEND_RC_UC) ; break;
 				default   : user_param->inline_size = 0;
 			}
 
-		} else {
-			user_param->inline_size = 0;
 		}
 	}
 
@@ -1534,7 +1542,10 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 	static int retry_count_flag = 0;
 	static int dont_xchg_versions_flag = 0;
 	static int use_exp_flag = 0;
+	#ifdef HAVE_CUDA
 	static int use_cuda_flag = 0;
+	static int use_cuda_um_flag = 0;
+	#endif
 	static int mmap_file_flag = 0;
 	static int mmap_offset_flag = 0;
 	static int ipv6_flag = 0;
@@ -1630,7 +1641,10 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 			{ .name = "flow_label",		.has_arg = 1, .flag = &flow_label_flag, .val = 1},
 			{ .name = "retry_count",	.has_arg = 1, .flag = &retry_count_flag, .val = 1},
 			{ .name = "dont_xchg_versions",	.has_arg = 0, .flag = &dont_xchg_versions_flag, .val = 1},
+			#ifdef HAVE_CUDA
 			{ .name = "use_cuda",		.has_arg = 0, .flag = &use_cuda_flag, .val = 1},
+			{ .name = "use_cuda_um",	.has_arg = 0, .flag = &use_cuda_um_flag, .val = 1},
+			#endif
 			{ .name = "mmap",		.has_arg = 1, .flag = &mmap_file_flag, .val = 1},
 			{ .name = "mmap-offset",	.has_arg = 1, .flag = &mmap_offset_flag, .val = 1},
 			{ .name = "ipv6",		.has_arg = 0, .flag = &ipv6_flag, .val = 1},
@@ -2051,10 +2065,14 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 	if (use_res_domain_flag) {
 		user_param->use_res_domain = 1;
 	}
-
+	#ifdef HAVE_CUDA
 	if (use_cuda_flag) {
 		user_param->use_cuda = 1;
 	}
+	if (use_cuda_um_flag) {
+		user_param->use_cuda_um = 1;
+	}
+	#endif
 	if (report_both_flag) {
 		user_param->report_both = 1;
 	}

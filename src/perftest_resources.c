@@ -53,7 +53,7 @@ struct check_alive_data check_alive_data;
 static CUdevice cuDevice;
 static CUcontext cuContext;
 
-static int pp_init_gpu(struct pingpong_context *ctx, size_t _size)
+static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, int use_um)
 {
 	const size_t gpu_page_size = 64*1024;
 	size_t size = (_size + gpu_page_size - 1) & ~(gpu_page_size - 1);
@@ -79,15 +79,19 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size)
 	else
 		printf("There are %d devices supporting CUDA, picking first...\n", deviceCount);
 
-	int devID = 0;
+	int gpuID = 0;
 
-	/* pick up device with zero ordinal (default, or devID) */
-	CUCHECK(cuDeviceGet(&cuDevice, devID));
+	/* pick up device with zero ordinal (default, or gpuID) */
+	CUCHECK(cuDeviceGet(&cuDevice, gpuID));
 
 	char name[128];
-	CUCHECK(cuDeviceGetName(name, sizeof(name), devID));
-	printf("[pid = %d, dev = %d] device name = [%s]\n", getpid(), cuDevice, name);
-	printf("creating CUDA Ctx\n");
+	int pciDomainID, pciBusID, pciDeviceID;
+	CUCHECK(cuDeviceGetName(name, sizeof(name), cuDevice));
+	CUCHECK(cuDeviceGetAttribute(&pciDomainID, CU_DEVICE_ATTRIBUTE_PCI_DOMAIN_ID, cuDevice));
+	CUCHECK(cuDeviceGetAttribute(&pciBusID,    CU_DEVICE_ATTRIBUTE_PCI_BUS_ID,    cuDevice));
+	CUCHECK(cuDeviceGetAttribute(&pciDeviceID, CU_DEVICE_ATTRIBUTE_PCI_DEVICE_ID, cuDevice));
+        printf("[pid=%d id=%d dev=%d] GPU name=[%s] PCI Domain/Bus/Dev: %04x/%02x/%02x\n", 
+	       getpid(), gpuID, cuDevice, name, pciDomainID, pciBusID, pciDeviceID);
 
 	/* Create context */
 	error = cuCtxCreate(&cuContext, CU_CTX_MAP_HOST, cuDevice);
@@ -104,17 +108,21 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size)
 	}
 
 	printf("cuMemAlloc() of a %zd bytes GPU buffer\n", size);
-	CUdeviceptr d_A;
-	error = cuMemAlloc(&d_A, size);
-	if (error != CUDA_SUCCESS) {
-		printf("cuMemAlloc error=%d\n", error);
-		return 1;
-	}
-	printf("allocated GPU buffer address at %016llx pointer=%p\n", d_A,
-	       (void *) d_A);
-	ctx->buf[0] = (void*)d_A;
+        CUdeviceptr d_A;
+        if (use_um) {
+                error = cuMemAllocManaged(&d_A, size, CU_MEM_ATTACH_GLOBAL);
+        } else {
+                error = cuMemAlloc(&d_A, size);
+        }
+        if (error != CUDA_SUCCESS) {
+                printf("CUDA allocation failed with error=%d\n", error);
+                ctx->buf[0] = NULL;
+                return 1;
+        }
+        printf("allocated GPU buffer address at %016llx\n", d_A);
+        ctx->buf[0] = (void*)d_A;
 
-	return 0;
+        return 0;
 }
 
 static int pp_free_gpu(struct pingpong_context *ctx)
@@ -123,7 +131,7 @@ static int pp_free_gpu(struct pingpong_context *ctx)
 	CUdeviceptr d_A = (CUdeviceptr) ctx->buf[0];
 
 	printf("deallocating RX GPU buffer\n");
-	cuMemFree(d_A);
+	CUCHECK(cuMemFree(d_A));
 	d_A = 0;
 
 	printf("destroying current CUDA Ctx\n");
@@ -1157,7 +1165,7 @@ int create_single_mr(struct pingpong_context *ctx, struct perftest_parameters *u
 	#ifdef HAVE_CUDA
 	if (user_param->use_cuda) {
 		ctx->is_contig_supported = FAILURE;
-		if(pp_init_gpu(ctx, ctx->buff_size)) {
+		if(pp_init_gpu(ctx, ctx->buff_size, user_param->use_cuda_um)) {
 			fprintf(stderr, "Couldn't allocate work buf.\n");
 			return 1;
 		}
@@ -1251,6 +1259,10 @@ int create_single_mr(struct pingpong_context *ctx, struct perftest_parameters *u
 
 	/* Initialize buffer with random numbers */
 	srand(time(NULL));
+	#ifdef HAVE_CUDA
+        // CUDA memory pointers cannot be de-referenced on CPU code
+	if (!user_param->use_cuda)
+        #endif
 	for (i = 0; i < ctx->buff_size; i++) {
 		((char*)ctx->buf[qp_index])[i] = (char)rand();
 	}
@@ -1338,10 +1350,12 @@ int ctx_init(struct pingpong_context *ctx, struct perftest_parameters *user_para
 
 	if (create_mr(ctx, user_param)) {
 		fprintf(stderr, "Failed to create MR\n");
+                return FAILURE;
 	}
 
 	if (create_cqs(ctx, user_param)) {
 		fprintf(stderr, "Failed to create CQs\n");
+                return FAILURE;
 	}
 
 	#ifdef HAVE_XRCD
