@@ -1004,8 +1004,7 @@ int rdma_client_connect(struct pingpong_context *ctx,struct perftest_parameters 
 		user_param->rem_ud_qkey = event->param.ud.qkey;
 
 		ctx->ah[0] = ibv_create_ah(ctx->pd,&event->param.ud.ah_attr);
-
-		if (!ctx->ah) {
+		if (!ctx->ah[0]) {
 			printf(" Unable to create address handler for UD QP\n");
 			return FAILURE;
 		}
@@ -1706,6 +1705,7 @@ int check_mtu(struct ibv_context *context,struct perftest_parameters *user_param
 	char cur[2];
 	char rem[2];
 	int size_of_cur;
+	float rem_vers = atof(user_param->rem_version);
 
 	if (user_param->connection_type == RawEth) {
 		if (set_eth_mtu(user_param) != 0 ) {
@@ -1715,11 +1715,12 @@ int check_mtu(struct ibv_context *context,struct perftest_parameters *user_param
 	} else {
 		curr_mtu = (int) (set_mtu(context,user_param->ib_port,user_param->mtu));
 		if (!user_param->dont_xchg_versions) {
-			if (strverscmp(user_param->rem_version, "5.1") >= 0) {
+			/*add mtu set in remote node from version 5.1 and above*/
+			if (rem_vers >= 5.1 ) {
 				sprintf(cur,"%d",curr_mtu);
 
 				/*fix a buffer overflow issue in ppc.*/
-				size_of_cur = (strverscmp(user_param->rem_version, "5.31") >= 0) ? sizeof(char[2]) : sizeof(int);
+				size_of_cur = (rem_vers >= 5.31) ? sizeof(char[2]) : sizeof(int);
 
 				if (ctx_xchg_data(user_comm,(void*)(cur),(void*)(rem),size_of_cur)) {
 					fprintf(stderr," Failed to exchange data between server and clients\n");
