@@ -57,7 +57,7 @@ struct check_alive_data check_alive_data;
 static CUdevice cuDevice;
 static CUcontext cuContext;
 
-static int pp_init_gpu(struct pingpong_context *ctx, size_t _size)
+static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, int use_um)
 {
 	const size_t gpu_page_size = 64*1024;
 	size_t size = (_size + gpu_page_size - 1) & ~(gpu_page_size - 1);
@@ -107,18 +107,35 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size)
 		return 1;
 	}
 
-	printf("cuMemAlloc() of a %zd bytes GPU buffer\n", size);
-	CUdeviceptr d_A;
-	error = cuMemAlloc(&d_A, size);
-	if (error != CUDA_SUCCESS) {
-		printf("cuMemAlloc error=%d\n", error);
-		return 1;
-	}
-	printf("allocated GPU buffer address at %016llx pointer=%p\n", d_A,
-	       (void *) d_A);
-	ctx->buf[0] = (void*)d_A;
+        CUdeviceptr d_A;
+        if (use_um) {
+		printf("cuMemAllocManaged() of %zd bytes\n", size);
+                error = cuMemAllocManaged(&d_A, size, CU_MEM_ATTACH_GLOBAL);
+		if (error == CUDA_SUCCESS) {
+		  if (0) { // populate on cpu
+		    printf("cuMemAdvise preferred location is CPU\n");
+		    cuMemAdvise(d_A, size, CU_MEM_ADVISE_SET_PREFERRED_LOCATION, CU_DEVICE_CPU);
+		    cuMemPrefetchAsync(d_A, size, CU_DEVICE_CPU, CU_STREAM_DEFAULT);
+		  } else { // populate on GPU
+		    printf("cuMemAdvise preferred location is GPU dev %d\n", cuDevice);
+		    cuMemAdvise(d_A, size, CU_MEM_ADVISE_SET_PREFERRED_LOCATION, cuDevice);
+		    cuMemPrefetchAsync(d_A, size, cuDevice, CU_STREAM_DEFAULT);
+		  }
+		  cuCtxSynchronize();
+		}
+        } else {
+		printf("cuMemAlloc() of %zd bytes\n", size);
+                error = cuMemAlloc(&d_A, size);
+        }
+        if (error != CUDA_SUCCESS) {
+                printf("CUDA allocation failed with error=%d\n", error);
+                ctx->buf[0] = NULL;
+                return 1;
+        }
+        printf("allocated GPU buffer address at %016llx\n", d_A);
+        ctx->buf[0] = (void*)d_A;
 
-	return 0;
+        return 0;
 }
 
 static int pp_free_gpu(struct pingpong_context *ctx)
