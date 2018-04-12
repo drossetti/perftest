@@ -1192,11 +1192,11 @@ int create_single_mr(struct pingpong_context *ctx, struct perftest_parameters *u
 
 		/* ODP does not support contig pages */
 		ctx->is_contig_supported = FAILURE;
-		#ifdef HAVE_EX_ODP
+		//#ifdef HAVE_EX_ODP
 		flags |= IBV_ACCESS_ON_DEMAND;
-		#elif defined  HAVE_EXP_ODP
+		//#if defined  HAVE_EXP_ODP
 		exp_flags |= IBV_EXP_ACCESS_ON_DEMAND;
-		#endif
+		//#endif
 	}
 	#endif
 
