@@ -1298,7 +1298,7 @@ static void force_dependecies(struct perftest_parameters *user_param)
 
 	#ifdef HAVE_CUDA
 	if (user_param->use_cuda) {
-		if (user_param->tst != BW) {
+		if (0 && user_param->tst != BW) {
 			printf(RESULT_LINE);
 			fprintf(stderr," Perftest supports CUDA only in BW tests\n");
 			exit(1);
