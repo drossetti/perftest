@@ -1203,13 +1203,17 @@ int create_single_mr(struct pingpong_context *ctx, struct perftest_parameters *u
 	#ifdef HAVE_CUDA
 	if (user_param->use_cuda) {
 		ctx->is_contig_supported = FAILURE;
-		if(pp_init_gpu(ctx, ctx->buff_size)) {
+		#if defined HAVE_EX_ODP || defined HAVE_EXP_ODP
+		if (user_param->use_odp && !user_param->use_cuda_um)
+			printf("WARNING: CUDA device memory does not work with ODP\n");
+		#endif
+		if(pp_init_gpu(ctx, ctx->buff_size, user_param->use_cuda_um)) {
 			fprintf(stderr, "Couldn't allocate work buf.\n");
 			return FAILURE;
 		}
-	} else
+	}
+	else
 	#endif
-
 	if (user_param->mmap_file != NULL) {
 		#if defined(__FreeBSD__)
 		posix_memalign(ctx->buf, user_param->cycle_buffer, ctx->buff_size);
