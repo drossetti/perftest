@@ -111,13 +111,26 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, int use_um)
 		return 1;
 	}
 
-	printf("cuMemAlloc() of a %zd bytes GPU buffer\n", size);
         CUdeviceptr d_A;
-        if (use_um) {
-                error = cuMemAllocManaged(&d_A, size, CU_MEM_ATTACH_GLOBAL);
-        } else {
-                error = cuMemAlloc(&d_A, size);
-        }
+	if (use_um) {
+		printf("cuMemAllocManaged() of %zd bytes\n", size);
+		error = cuMemAllocManaged(&d_A, size, CU_MEM_ATTACH_GLOBAL);
+		if (error == CUDA_SUCCESS) {
+			if (0) { // populate on cpu
+				printf("cuMemAdvise preferred location is CPU\n");
+				cuMemAdvise(d_A, size, CU_MEM_ADVISE_SET_PREFERRED_LOCATION, CU_DEVICE_CPU);
+				cuMemPrefetchAsync(d_A, size, CU_DEVICE_CPU, CU_STREAM_DEFAULT);
+			} else { // populate on GPU
+				printf("cuMemAdvise preferred location is GPU dev %d\n", cuDevice);
+				cuMemAdvise(d_A, size, CU_MEM_ADVISE_SET_PREFERRED_LOCATION, cuDevice);
+				cuMemPrefetchAsync(d_A, size, cuDevice, CU_STREAM_DEFAULT);
+			}
+			cuCtxSynchronize();
+		}
+	} else {
+		printf("cuMemAlloc() of a %zd bytes GPU buffer\n", size);
+		error = cuMemAlloc(&d_A, size);
+	}
         if (error != CUDA_SUCCESS) {
                 printf("CUDA allocation failed with error=%d\n", error);
                 ctx->buf[0] = NULL;
