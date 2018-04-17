@@ -458,8 +458,9 @@ static void usage(const char *argv0, VerbType verb, TestType tst, int connection
 		#ifdef HAVE_CUDA
 		printf("      --use_cuda ");
 		printf(" Use CUDA lib for GPU-Direct testing.\n");
-		printf("      --use_cuda_um ");
+		printf("      --use_cuda_um=<value>");
 		printf(" Use CUDA Unified Memory for GPU-Direct testing, needs --use_cuda.\n");
+		printf(" <value>=0(disabled),1(preferred location==CPU),2(preferred location==GPU),3+(default affinity)\n");
 		#endif
 
 		#ifdef HAVE_VERBS_EXP
@@ -1868,7 +1869,7 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 			{ .name = "dont_xchg_versions",	.has_arg = 0, .flag = &dont_xchg_versions_flag, .val = 1},
 			#ifdef HAVE_CUDA
 			{ .name = "use_cuda",		.has_arg = 0, .flag = &use_cuda_flag, .val = 1},
-			{ .name = "use_cuda_um",	.has_arg = 0, .flag = &use_cuda_um_flag, .val = 1},
+			{ .name = "use_cuda_um",	.has_arg = required_argument, .flag = &use_cuda_um_flag, .val = 1},
 			#endif
 			{ .name = "mmap",		.has_arg = 1, .flag = &mmap_file_flag, .val = 1},
 			{ .name = "mmap-offset",	.has_arg = 1, .flag = &mmap_offset_flag, .val = 1},
@@ -2139,6 +2140,12 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 			case 'v': user_param->mac_fwd = ON; break;
 			case 'G': user_param->use_rss = ON; break;
 			case 0: /* required for long options to work. */
+				#ifdef HAVE_CUDA
+				if (use_cuda_um_flag) {
+					user_param->use_cuda_um = strtol(optarg,NULL,0);
+					use_cuda_um_flag = 0;
+				}
+				#endif
 				if (pkey_flag) {
 					user_param->pkey_index = strtol(optarg,NULL,0);
 					pkey_flag = 0;
@@ -2389,9 +2396,6 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 	#ifdef HAVE_CUDA
 	if (use_cuda_flag) {
 		user_param->use_cuda = 1;
-	}
-	if (use_cuda_um_flag) {
-		user_param->use_cuda_um = 1;
 	}
 	#endif
 	if (report_both_flag) {
