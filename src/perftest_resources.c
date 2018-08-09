@@ -125,7 +125,7 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, int use_um)
 				cuMemAdvise(d_A, size, CU_MEM_ADVISE_SET_PREFERRED_LOCATION, cuDevice);
 				cuMemPrefetchAsync(d_A, size, cuDevice, CU_STREAM_DEFAULT);
 			} else {
-				printf("WARNING: skipping CUDA UM affinity selection\n", use_um);
+				printf("WARNING: skipping CUDA UM affinity selection\n");
 			}
 			cuCtxSynchronize();
 		}
