@@ -118,12 +118,28 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, int use_um)
 		if (error == CUDA_SUCCESS) {
 			if (use_um==1) { // populate on CPU
 				printf("cuMemAdvise preferred location is CPU\n");
-				cuMemAdvise(d_A, size, CU_MEM_ADVISE_SET_PREFERRED_LOCATION, CU_DEVICE_CPU);
-				cuMemPrefetchAsync(d_A, size, CU_DEVICE_CPU, CU_STREAM_DEFAULT);
+				error = cuMemAdvise(d_A, size, CU_MEM_ADVISE_SET_PREFERRED_LOCATION, CU_DEVICE_CPU);
+				if (error != CUDA_SUCCESS) {
+					printf("cuCtxSetCurrent() error=%d\n", error);
+					return 1;
+				}
+				error = cuMemPrefetchAsync(d_A, size, CU_DEVICE_CPU, CU_STREAM_DEFAULT);
+				if (error != CUDA_SUCCESS) {
+					printf("cuCtxSetCurrent() error=%d\n", error);
+					return 1;
+				}
 			} else if (use_um==2) { // populate on GPU
 				printf("cuMemAdvise preferred location is GPU dev %d\n", cuDevice);
-				cuMemAdvise(d_A, size, CU_MEM_ADVISE_SET_PREFERRED_LOCATION, cuDevice);
-				cuMemPrefetchAsync(d_A, size, cuDevice, CU_STREAM_DEFAULT);
+				error = cuMemAdvise(d_A, size, CU_MEM_ADVISE_SET_PREFERRED_LOCATION, cuDevice);
+				if (error != CUDA_SUCCESS) {
+					printf("cuCtxSetCurrent() error=%d\n", error);
+					return 1;
+				}
+				error = cuMemPrefetchAsync(d_A, size, cuDevice, CU_STREAM_DEFAULT);
+				if (error != CUDA_SUCCESS) {
+					printf("cuCtxSetCurrent() error=%d\n", error);
+					return 1;
+				}
 			} else {
 				printf("WARNING: skipping CUDA UM affinity selection\n");
 			}
