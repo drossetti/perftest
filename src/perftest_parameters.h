@@ -70,6 +70,23 @@
 
 #ifdef HAVE_CUDA
 #include CUDA_PATH
+
+enum cuda_mem_type {
+  CUDA_MEM_DEVICE = 0,
+  CUDA_MEM_MANAGED,
+  CUDA_MEM_HOSTALLOC,
+  CUDA_MEM_HOSTREGISTER,
+  CUDA_MEM_MALLOC,
+  CUDA_MEM_TYPES
+};
+
+enum cuda_mem_hints {
+  CUDA_MEM_NO_HINTS = 0,
+  CUDA_MEM_POPULATE_CPU,
+  CUDA_MEM_POPULATE_GPU,
+  CUDA_MEM_HINTS
+};
+
 #endif
 
 /* Connection types available. */
@@ -442,7 +459,8 @@ struct perftest_parameters {
 	int				raw_qos;
 	#ifdef HAVE_CUDA
 	int				use_cuda;
-	int				use_cuda_um;
+	int				cuda_mem_type;
+	int				cuda_mem_hints;
 	#endif
 	char				*mmap_file;
 	unsigned long			mmap_offset;

@@ -20,6 +20,7 @@
 #endif
 
 #include "perftest_resources.h"
+#include "perftest_parameters.h"
 #include "raw_ethernet_resources.h"
 #include "config.h"
 
@@ -43,6 +44,7 @@ struct check_alive_data check_alive_data;
 	do {											\
 	if (!(x)) {										\
 		fprintf(stdout, "Assertion \"%s\" failed at %s:%d\n", #x, __FILE__, __LINE__);	\
+		exit(EXIT_FAILURE);					\
 	}											\
 } while (0)
 
@@ -54,30 +56,136 @@ struct check_alive_data check_alive_data;
 
 /*----------------------------------------------------------------------------*/
 
-static CUdevice cuDevice;
-static CUcontext cuContext;
+static CUdevice cuDevice = 0;
+static CUcontext cuContext = 0;
+static int cuda_mem_type = -1;
 
-static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, int use_um)
+static int set_memory_hints(CUdeviceptr d_ptr, size_t size, int mem_hints)
 {
+	int rc = 0;
+	int populate_on = 0;
+	int populate = 0;
+	ASSERT(cuContext);
+	switch(mem_hints) {
+	case CUDA_MEM_NO_HINTS:
+		printf("WARNING: using default memory hints\n");
+		populate = 0;
+		break;
+	case CUDA_MEM_POPULATE_CPU:
+		// populate on CPU
+		printf("cuMemAdvise: preferred location is CPU\n");
+		populate_on = CU_DEVICE_CPU;
+		populate = 1;
+		break;
+	case CUDA_MEM_POPULATE_GPU:
+		// populate on GPU
+		printf("cuMemAdvise: preferred location is GPU device %d\n", cuDevice);
+		populate_on = cuDevice;
+		populate = 1;
+		break;
+	default:
+		printf("ERROR: invalid memory hint\n");
+		rc = 1;
+		break;
+	}
+	if (populate) {
+		CUresult error;
+		error = cuMemAdvise(d_ptr, size, CU_MEM_ADVISE_SET_ACCESSED_BY, cuDevice);
+		if (error != CUDA_SUCCESS) {
+			printf("cuMemAdvise(SET_ACCESSED_BY, %d) error=%d\n", cuDevice, error);
+			rc = 1;
+			goto err;
+		}
+		error = cuMemAdvise(d_ptr, size, CU_MEM_ADVISE_SET_ACCESSED_BY, CU_DEVICE_CPU);
+		if (error != CUDA_SUCCESS) {
+			printf("cuMemAdvise(SET_ACCESSED_BY, CPU) error=%d\n", error);
+			rc = 1;
+			goto err;
+		}
+		error = cuMemAdvise(d_ptr, size, CU_MEM_ADVISE_SET_PREFERRED_LOCATION, populate_on);
+		if (error != CUDA_SUCCESS) {
+			printf("cuMemAdvise(SET_PREFERRED_LOCATION, %d) error=%d\n", populate_on, error);
+			rc = 1;
+			goto err;
+		}
+		error = cuMemPrefetchAsync(d_ptr, size, populate_on, CU_STREAM_DEFAULT);
+		if (error != CUDA_SUCCESS) {
+			printf("cuMemPrefetchAsync(%d) error=%d\n", populate_on, error);
+			rc = 1;
+			goto err;
+		}
+		CUCHECK(cuCtxSynchronize());
+	}
+ err:
+	return rc;
+}
+
+static int pp_free_gpu(struct pingpong_context *ctx)
+{
+	int rc = 0;
+	void *ptr = ctx->buf[0];
+	CUdeviceptr d_ptr = (CUdeviceptr)ptr;
+	if (ptr) {
+		printf("freeing CUDA memory buffer\n");
+		switch (cuda_mem_type) {
+		case CUDA_MEM_DEVICE:
+		case CUDA_MEM_MANAGED:
+			CUCHECK(cuMemFree(d_ptr));
+			break;
+		case CUDA_MEM_HOSTALLOC:
+			CUCHECK(cuMemFreeHost(ptr));
+			break;
+		case CUDA_MEM_MALLOC:
+		case CUDA_MEM_HOSTREGISTER: {
+			if (CUDA_MEM_HOSTREGISTER == cuda_mem_type) {
+				CUCHECK(cuMemHostUnregister(ptr));
+			}		
+			free(ctx->buf[0]);
+			break;
+		}
+		default:
+			printf("invalid CUDA memory type\n");
+			rc = 1;
+			goto err;
+		}
+		ctx->buf[0] = 0;
+	}
+	if (cuContext) {
+		printf("destroying current CUDA Ctx\n");
+		CUCHECK(cuCtxDestroy(cuContext));
+		cuContext = 0;
+	}
+ err:
+	return rc;
+}
+
+static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, size_t alignment, int mem_type, int mem_hints)
+{
+	int rc = 0;
 	const size_t gpu_page_size = 64*1024;
+	// round-up to gpu page size
 	size_t size = (_size + gpu_page_size - 1) & ~(gpu_page_size - 1);
+
 	printf("initializing CUDA\n");
 	CUresult error = cuInit(0);
 	if (error != CUDA_SUCCESS) {
 		printf("cuInit(0) returned %d\n", error);
-		exit(1);
+		rc = 1;
+		goto err;
 	}
 
 	int deviceCount = 0;
 	error = cuDeviceGetCount(&deviceCount);
 	if (error != CUDA_SUCCESS) {
 		printf("cuDeviceGetCount() returned %d\n", error);
-		exit(1);
+		rc = 1;
+		goto err;
 	}
 	/* This function call returns 0 if there are no CUDA capable devices. */
 	if (deviceCount == 0) {
 		printf("There are no available device(s) that support CUDA\n");
-		return 1;
+		rc = 1;
+		goto err;
 	} else if (deviceCount == 1)
 		printf("There is 1 device supporting CUDA\n");
 	else
@@ -101,78 +209,82 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, int use_um)
 	error = cuCtxCreate(&cuContext, CU_CTX_MAP_HOST, cuDevice);
 	if (error != CUDA_SUCCESS) {
 		printf("cuCtxCreate() error=%d\n", error);
-		return 1;
+		rc = 1;
+		goto err;
 	}
-
+	/* should not be necessary */
 	printf("making it the current CUDA Ctx\n");
 	error = cuCtxSetCurrent(cuContext);
 	if (error != CUDA_SUCCESS) {
 		printf("cuCtxSetCurrent() error=%d\n", error);
-		return 1;
+		rc = 1;
+		goto err_free_ctx;
 	}
-
-        CUdeviceptr d_A;
-	if (use_um) {
-		printf("cuMemAllocManaged() of %zd bytes\n", size);
-		error = cuMemAllocManaged(&d_A, size, CU_MEM_ATTACH_GLOBAL);
-		if (error == CUDA_SUCCESS) {
-			if (use_um==1) { // populate on CPU
-				printf("cuMemAdvise preferred location is CPU\n");
-				error = cuMemAdvise(d_A, size, CU_MEM_ADVISE_SET_PREFERRED_LOCATION, CU_DEVICE_CPU);
-				if (error != CUDA_SUCCESS) {
-					printf("cuCtxSetCurrent() error=%d\n", error);
-					return 1;
-				}
-				error = cuMemPrefetchAsync(d_A, size, CU_DEVICE_CPU, CU_STREAM_DEFAULT);
-				if (error != CUDA_SUCCESS) {
-					printf("cuCtxSetCurrent() error=%d\n", error);
-					return 1;
-				}
-			} else if (use_um==2) { // populate on GPU
-				printf("cuMemAdvise preferred location is GPU dev %d\n", cuDevice);
-				error = cuMemAdvise(d_A, size, CU_MEM_ADVISE_SET_PREFERRED_LOCATION, cuDevice);
-				if (error != CUDA_SUCCESS) {
-					printf("cuCtxSetCurrent() error=%d\n", error);
-					return 1;
-				}
-				error = cuMemPrefetchAsync(d_A, size, cuDevice, CU_STREAM_DEFAULT);
-				if (error != CUDA_SUCCESS) {
-					printf("cuCtxSetCurrent() error=%d\n", error);
-					return 1;
-				}
-			} else {
-				printf("WARNING: skipping CUDA UM affinity selection\n");
-			}
-			cuCtxSynchronize();
-		}
-	} else {
+        CUdeviceptr d_ptr;
+	cuda_mem_type = mem_type;
+	switch (mem_type) {
+	case CUDA_MEM_DEVICE:
+		// TODO: check alignment
 		printf("cuMemAlloc() of a %zd bytes GPU buffer\n", size);
-		error = cuMemAlloc(&d_A, size);
+		error = cuMemAlloc(&d_ptr, size);
+		break;
+	case CUDA_MEM_MANAGED:
+		// TODO: check alignment
+		printf("cuMemAllocManaged() of %zd bytes\n", size);
+		error = cuMemAllocManaged(&d_ptr, size, CU_MEM_ATTACH_GLOBAL);
+		break;
+	case CUDA_MEM_HOSTALLOC: {
+		void *ptr;
+		// TODO: check alignment
+		printf("cuMemHostAlloc() of %zd bytes\n", size);
+		error = cuMemHostAlloc(&ptr, size, 0 /*CU_MEMHOSTALLOC_PORTABLE|CU_MEMHOSTALLOC_DEVICEMAP|CU_MEMHOSTALLOC_WRITECOMBINED*/);
+		d_ptr = (CUdeviceptr)ptr;
+		break;
+	}
+	case CUDA_MEM_MALLOC:
+	case CUDA_MEM_HOSTREGISTER: {
+		void *ptr;
+		printf("memalign() of %zd bytes\n", size);
+		#if defined(__FreeBSD__)
+		posix_memalign(&ptr, alignment, size);
+		#else
+		ptr = memalign(alignment, size);
+		#endif
+		if (!ptr) {
+			printf("Host allocation failure\n");
+			rc = 1;
+			goto err_free_ctx;
+		}
+		if (CUDA_MEM_HOSTREGISTER == mem_type) {
+			CUCHECK(cuMemHostRegister(ptr, size, 0 /* CU_MEMHOSTREGISTER_PORTABLE|CU_MEMHOSTREGISTER_DEVICEMAP|CU_MEMHOSTREGISTER_IOMEMORY*/));
+		}
+		d_ptr = (CUdeviceptr)ptr;
+		break;
+	}
+	default:
+		rc = 1;
+		goto err_free_ctx;
 	}
         if (error != CUDA_SUCCESS) {
                 printf("CUDA allocation failed with error=%d\n", error);
                 ctx->buf[0] = NULL;
-                return 1;
+                rc = 1;
+		goto err_free_ctx;
         }
-        printf("allocated GPU buffer address at %016llx\n", d_A);
-        ctx->buf[0] = (void*)d_A;
-
+	if (set_memory_hints(d_ptr, size, mem_hints)) {
+		rc = 1;
+		goto err_free_buf;
+	}
+	
+        printf("allocated memory buffer has address %016llx\n", d_ptr);
+        ctx->buf[0] = (void*)d_ptr;
         return 0;
-}
-
-static int pp_free_gpu(struct pingpong_context *ctx)
-{
-	int ret = 0;
-	CUdeviceptr d_A = (CUdeviceptr) ctx->buf[0];
-
-	printf("deallocating RX GPU buffer\n");
-	CUCHECK(cuMemFree(d_A));
-	d_A = 0;
-
-	printf("destroying current CUDA Ctx\n");
-	CUCHECK(cuCtxDestroy(cuContext));
-
-	return ret;
+	
+ err_free_buf:
+ err_free_ctx:
+	pp_free_gpu(ctx);
+ err:
+	return rc;
 }
 #endif
 
@@ -1218,22 +1330,24 @@ int create_single_mr(struct pingpong_context *ctx, struct perftest_parameters *u
 	}
 	#endif
 
+
 	#ifdef HAVE_CUDA
 	if (user_param->use_cuda) {
 		ctx->is_contig_supported = FAILURE;
 		#if defined HAVE_EX_ODP || defined HAVE_EXP_ODP
-		if (user_param->use_odp && !user_param->use_cuda_um) {
-			printf("WARNING: CUDA device memory does not work with ODP\n");
+		if ((user_param->cuda_mem_type == CUDA_MEM_DEVICE) && user_param->use_odp) {
+			printf("WARNING: ODP does not support CUDA device memory\n");
+		}
+		if ((user_param->cuda_mem_type == CUDA_MEM_MANAGED) && !user_param->use_odp) {
+			printf("WARNING: CUDA managed memory might require ODP\n");
 		}
 		#endif
-
-		if(pp_init_gpu(ctx, ctx->buff_size, user_param->use_cuda_um)) {
+		if (pp_init_gpu(ctx, ctx->buff_size, user_param->cycle_buffer, user_param->cuda_mem_type, user_param->cuda_mem_hints)) {
 			fprintf(stderr, "Couldn't allocate work buf.\n");
 			return FAILURE;
 		}
 	} else
 	#endif
-
 	if (user_param->mmap_file != NULL) {
 		#if defined(__FreeBSD__)
 		posix_memalign(ctx->buf, user_param->cycle_buffer, ctx->buff_size);
@@ -1246,7 +1360,6 @@ int create_single_mr(struct pingpong_context *ctx, struct perftest_parameters *u
 			fprintf(stderr, "Couldn't allocate work buf.\n");
 			return FAILURE;
 		}
-
 	} else {
 		/* Allocating buffer for data, in case driver not support contig pages. */
 		if (ctx->is_contig_supported == FAILURE) {
@@ -1278,7 +1391,6 @@ int create_single_mr(struct pingpong_context *ctx, struct perftest_parameters *u
 			#endif
 		}
 	}
-
 	if (user_param->verb == WRITE) {
 		flags |= IBV_ACCESS_REMOTE_WRITE;
 		#ifdef HAVE_VERBS_EXP
