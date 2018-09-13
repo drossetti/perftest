@@ -202,8 +202,8 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, size_t alignm
 	CUCHECK(cuDeviceGetAttribute(&pciDomainID, CU_DEVICE_ATTRIBUTE_PCI_DOMAIN_ID, cuDevice));
 	CUCHECK(cuDeviceGetAttribute(&pciBusID,    CU_DEVICE_ATTRIBUTE_PCI_BUS_ID,    cuDevice));
 	CUCHECK(cuDeviceGetAttribute(&pciDeviceID, CU_DEVICE_ATTRIBUTE_PCI_DEVICE_ID, cuDevice));
-        printf("[pid=%d id=%d dev=%d] GPU name=[%s] PCI Domain/Bus/Dev: %04x/%02x/%02x\n", 
-	       getpid(), gpuID, cuDevice, name, pciDomainID, pciBusID, pciDeviceID);
+        printf("GPU ordinal:%d device:%d name:%s PCI Domain/Bus/Dev: 04x/%02x/%02x\n", 
+	       gpuID, cuDevice, name, pciDomainID, pciBusID, pciDeviceID);
 
 	/* Create context */
 	error = cuCtxCreate(&cuContext, CU_CTX_MAP_HOST, cuDevice);
