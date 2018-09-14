@@ -182,7 +182,15 @@ struct pingpong_context {
 	struct ibv_exp_cq_family		*recv_cq_family;
 	struct ibv_exp_qp_burst_family		**qp_burst_family;
 	#endif
-
+	#ifdef HAVE_CUDA
+	int                                     gpu_ordinal;
+	CUdevice                                gpu_device;
+	CUcontext                               gpu_context;
+	int                                     gpu_mem_type;
+	int                                     gpu_mem_hints;
+	int                                     gpu_has_ats;
+	int                                     gpu_has_uvmfull;
+	#endif
 };
 
  struct pingpong_dest {

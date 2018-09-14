@@ -82,8 +82,8 @@ enum cuda_mem_type {
 
 enum cuda_mem_hints {
   CUDA_MEM_NO_HINTS = 0,
-  CUDA_MEM_POPULATE_CPU,
-  CUDA_MEM_POPULATE_GPU,
+  CUDA_MEM_POPULATE_ON_CPU,
+  CUDA_MEM_POPULATE_ON_GPU,
   CUDA_MEM_HINTS
 };
 
