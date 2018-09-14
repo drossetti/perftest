@@ -82,7 +82,7 @@ static int set_memory_hints(CUdeviceptr d_ptr, size_t size, CUdevice gpu_device,
 	}
 	switch(mem_hints) {
 	case CUDA_MEM_NO_HINTS:
-		printf("WARNING: using default memory hints\n");
+		printf("using default memory hints\n");
 		populate = 0;
 		prefetch = 0;
 		break;
@@ -1390,7 +1390,7 @@ int create_single_mr(struct pingpong_context *ctx, struct perftest_parameters *u
 		}
 		use_odp = user_param->use_odp;
 		#endif
-		if (pp_init_gpu(ctx, ctx->buff_size, user_param->cycle_buffer, 0, user_param->cuda_mem_type, user_param->cuda_mem_hints, use_odp)) {
+		if (pp_init_gpu(ctx, ctx->buff_size, user_param->cycle_buffer, user_param->cuda_ordinal, user_param->cuda_mem_type, user_param->cuda_mem_hints, use_odp)) {
 			fprintf(stderr, "Couldn't allocate work buf.\n");
 			return FAILURE;
 		}

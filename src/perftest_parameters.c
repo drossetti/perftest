@@ -458,6 +458,8 @@ static void usage(const char *argv0, VerbType verb, TestType tst, int connection
 		#ifdef HAVE_CUDA
 		printf("      --use_cuda ");
 		printf(" Use CUDA memory for RDMA testing.\n");
+		printf("      --cuda_use_gpu=<N> ");
+		printf(" Select GPU ordinal N for testing.\n");
 		printf("      --cuda_mem_type=<value> ");
 		printf(" Set CUDA memory type <value>=0(device,default),1(managed),2(CUDA host alloc),3(malloc + CUDA host register),4(malloc).\n");
 		printf("      GPUDirect RDMA on CUDA managed memory requires --use_cuda and --odp.\n");
@@ -669,6 +671,7 @@ static void init_perftest_params(struct perftest_parameters *user_param)
 	user_param->output		= -1;
 	#ifdef HAVE_CUDA
 	user_param->use_cuda		= 0;
+	user_param->cuda_ordinal        = 0;
 	user_param->cuda_mem_type	= CUDA_MEM_DEVICE;
 	user_param->cuda_mem_hints	= CUDA_MEM_NO_HINTS;
 	#endif
@@ -1745,6 +1748,7 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 	static int use_exp_flag = 0;
 	#ifdef HAVE_CUDA
 	static int use_cuda_flag = 0;
+	static int cuda_ordinal_flag = 0;
 	static int cuda_mem_type_flag = 0;
 	static int cuda_mem_hints_flag = 0;
 	#endif
@@ -1869,6 +1873,7 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 			{ .name = "dont_xchg_versions",	.has_arg = 0, .flag = &dont_xchg_versions_flag, .val = 1},
 			#ifdef HAVE_CUDA
 			{ .name = "use_cuda",		.has_arg = 0, .flag = &use_cuda_flag, .val = 1},
+			{ .name = "cuda_use_gpu",	.has_arg = required_argument, .flag = &cuda_ordinal_flag, .val = 1},
 			{ .name = "cuda_mem_type",	.has_arg = required_argument, .flag = &cuda_mem_type_flag, .val = 1},
 			{ .name = "cuda_mem_hints",	.has_arg = required_argument, .flag = &cuda_mem_hints_flag, .val = 1},
 			#endif
@@ -2142,6 +2147,10 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 			case 'G': user_param->use_rss = ON; break;
 			case 0: /* required for long options to work. */
 				#ifdef HAVE_CUDA
+				if (cuda_ordinal_flag) {
+					user_param->cuda_ordinal = strtol(optarg,NULL,0);
+					cuda_ordinal_flag = 0;
+				}
 				if (cuda_mem_type_flag) {
 					user_param->cuda_mem_type = strtol(optarg,NULL,0);
 					if (user_param->cuda_mem_type < CUDA_MEM_DEVICE || user_param->cuda_mem_type >= CUDA_MEM_TYPES) {

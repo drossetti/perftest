@@ -459,6 +459,7 @@ struct perftest_parameters {
 	int				raw_qos;
 	#ifdef HAVE_CUDA
 	int				use_cuda;
+	int				cuda_ordinal;
 	int				cuda_mem_type;
 	int				cuda_mem_hints;
 	#endif
