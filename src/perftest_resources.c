@@ -62,13 +62,17 @@ static int set_memory_hints(CUdeviceptr d_ptr, size_t size, CUdevice gpu_device,
 	int populate_on = 0;
 	int populate = 0;
 	int prefetch = 0;
+	int readmostly = 0;
 	CUresult error;
 	switch(mem_type) {
 	case CUDA_MEM_MANAGED:
 	case CUDA_MEM_MALLOC:
-	case CUDA_MEM_HOSTREGISTER:
 		populate = 1;
 		prefetch = 1;
+		break;
+	case CUDA_MEM_HOSTREGISTER:
+		populate = 1; // this is not meant to be performant
+		prefetch = 1; // ditto
 		break;
 	case CUDA_MEM_DEVICE:
 	case CUDA_MEM_HOSTALLOC:
@@ -97,6 +101,14 @@ static int set_memory_hints(CUdeviceptr d_ptr, size_t size, CUdevice gpu_device,
 		}
 		populate_on = gpu_device;
 		break;
+	case CUDA_MEM_READ_MOSTLY:
+		printf("memory is read-mostly\n");
+		if (!has_uvmfull) {
+			printf("read-mostly is only supported on Pascal and newer GPUs\n");
+		}
+		readmostly = 1;
+		populate_on = gpu_device; // prefetching on GPU
+		break;
 	default:
 		printf("invalid memory hint\n");
 		rc = 1;
@@ -104,26 +116,37 @@ static int set_memory_hints(CUdeviceptr d_ptr, size_t size, CUdevice gpu_device,
 	}
 	// TODO: consider adding the capability to set CU_MEM_ADVISE_SET_READ_MOSTLY
 	if (populate) {
-		error = cuMemAdvise(d_ptr, size, CU_MEM_ADVISE_SET_ACCESSED_BY, gpu_device);
-		if (error != CUDA_SUCCESS) {
-			printf("cuMemAdvise(SET_ACCESSED_BY, %d) error=%d\n", gpu_device, error);
-			rc = 1;
-			goto err;
-		}
-		error = cuMemAdvise(d_ptr, size, CU_MEM_ADVISE_SET_ACCESSED_BY, CU_DEVICE_CPU);
-		if (error != CUDA_SUCCESS) {
-			printf("cuMemAdvise(SET_ACCESSED_BY, CPU) error=%d\n", error);
-			rc = 1;
-			goto err;
-		}
-		error = cuMemAdvise(d_ptr, size, CU_MEM_ADVISE_SET_PREFERRED_LOCATION, populate_on);
-		if (error != CUDA_SUCCESS) {
-			printf("cuMemAdvise(SET_PREFERRED_LOCATION, %d) error=%d\n", populate_on, error);
-			rc = 1;
-			goto err;
+		if (readmostly) {
+			printf("setting read-mostly advise\n");
+			error = cuMemAdvise(d_ptr, size, CU_MEM_ADVISE_SET_READ_MOSTLY, 0 /*ignored*/);
+			if (error != CUDA_SUCCESS) {
+				printf("cuMemAdvise(SET_ACCESSED_BY, %d) error=%d\n", gpu_device, error);
+				rc = 1;
+				goto err;
+			}
+		} else {
+			error = cuMemAdvise(d_ptr, size, CU_MEM_ADVISE_SET_ACCESSED_BY, gpu_device);
+			if (error != CUDA_SUCCESS) {
+				printf("cuMemAdvise(SET_ACCESSED_BY, %d) error=%d\n", gpu_device, error);
+				rc = 1;
+				goto err;
+			}
+			error = cuMemAdvise(d_ptr, size, CU_MEM_ADVISE_SET_ACCESSED_BY, CU_DEVICE_CPU);
+			if (error != CUDA_SUCCESS) {
+				printf("cuMemAdvise(SET_ACCESSED_BY, CPU) error=%d\n", error);
+				rc = 1;
+				goto err;
+			}
+			error = cuMemAdvise(d_ptr, size, CU_MEM_ADVISE_SET_PREFERRED_LOCATION, populate_on);
+			if (error != CUDA_SUCCESS) {
+				printf("cuMemAdvise(SET_PREFERRED_LOCATION, %d) error=%d\n", populate_on, error);
+				rc = 1;
+				goto err;
+			}
 		}
 	}
 	if (prefetch) {
+		printf("prefetching on device %d\n", populate_on);
 		error = cuMemPrefetchAsync(d_ptr, size, populate_on, CU_STREAM_DEFAULT);
 		if (error != CUDA_SUCCESS) {
 			printf("cuMemPrefetchAsync(%d) error=%d\n", populate_on, error);

@@ -465,7 +465,7 @@ static void usage(const char *argv0, VerbType verb, TestType tst, int connection
 		printf("      GPUDirect RDMA on CUDA managed memory requires --use_cuda and --odp.\n");
 		printf("      Inlining is not supported on CUDA device memory.\n");
 		printf("      --cuda_mem_hints=<value> ");
-		printf(" <value>=0(default),1(populate memory on host),2(populate memory on GPU)\n");
+		printf(" <value>=0(default),1(populate memory on host),2(populate memory on GPU),3(read-mostly)\n");
 		printf("      Populating memory works on both host and managed memory.\n");
 		#endif
 
