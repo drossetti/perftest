@@ -70,17 +70,15 @@ static int set_memory_hints(CUdeviceptr d_ptr, size_t size, CUdevice gpu_device,
 		populate = 1;
 		prefetch = 1;
 		break;
-	case CUDA_MEM_HOSTREGISTER:
-		populate = 1; // this is not meant to be performant
-		prefetch = 1; // ditto
-		break;
-	case CUDA_MEM_DEVICE:
 	case CUDA_MEM_HOSTALLOC:
+	case CUDA_MEM_DEVICE:
+	case CUDA_MEM_HOSTREGISTER:
+		printf("warning: memory hints are not supported on this memory type\n");
 		populate = 0;
 		prefetch = 0;
 		break;
 	default:
-		printf("invalid CUDA memory type\n");
+		printf("error: invalid CUDA memory type\n");
 		rc = 1;
 		goto err;
 	}
@@ -97,20 +95,20 @@ static int set_memory_hints(CUdeviceptr d_ptr, size_t size, CUdevice gpu_device,
 	case CUDA_MEM_POPULATE_ON_GPU:
 		printf("preferred location is GPU device %d\n", gpu_device);
 		if (!has_uvmfull) {
-			printf("populating on GPU is only supported on Pascal and newer GPUs\n");
+			printf("warning: populating on GPU is only supported on Pascal and newer GPUs\n");
 		}
 		populate_on = gpu_device;
 		break;
 	case CUDA_MEM_READ_MOSTLY:
-		printf("memory is read-mostly\n");
+		printf("requested memory read-mostly\n");
 		if (!has_uvmfull) {
-			printf("read-mostly is only supported on Pascal and newer GPUs\n");
+			printf("warning: read-mostly is only supported on Pascal and newer GPUs\n");
 		}
-		readmostly = 1;
+		readmostly = populate;
 		populate_on = gpu_device; // prefetching on GPU
 		break;
 	default:
-		printf("invalid memory hint\n");
+		printf("error: invalid CUDA memory hint\n");
 		rc = 1;
 		goto err;
 	}
@@ -146,7 +144,7 @@ static int set_memory_hints(CUdeviceptr d_ptr, size_t size, CUdevice gpu_device,
 		}
 	}
 	if (prefetch) {
-		printf("prefetching on device %d\n", populate_on);
+		printf("prefetching on device %d (-1=CPU)\n", populate_on );
 		error = cuMemPrefetchAsync(d_ptr, size, populate_on, CU_STREAM_DEFAULT);
 		if (error != CUDA_SUCCESS) {
 			printf("cuMemPrefetchAsync(%d) error=%d\n", populate_on, error);
@@ -277,6 +275,12 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, size_t alignm
 			goto err_free_ctx;
 		}
 		ctx->buf[0] = (void*)d_ptr;		
+		error = cuMemsetD8((CUdeviceptr)ctx->buf[0], (unsigned char)0xa5, size);
+		if (error != CUDA_SUCCESS) {
+			printf("CUDA memset failed with error=%d\n", error);
+			rc = 1;
+			goto err_free_buf;
+		}
 		break;
 	}
 	case CUDA_MEM_MANAGED: {
@@ -296,6 +300,12 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, size_t alignm
 			goto err_free_ctx;
 		}
 		ctx->buf[0] = (void*)d_ptr;
+		error = cuMemsetD8((CUdeviceptr)ctx->buf[0], (unsigned char)0xa5, size);
+		if (error != CUDA_SUCCESS) {
+			printf("CUDA memset failed with error=%d\n", error);
+			rc = 1;
+			goto err_free_buf;
+		}
 		break;
 	}
 	case CUDA_MEM_HOSTALLOC: {
@@ -311,6 +321,12 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, size_t alignm
 			goto err_free_ctx;
 		}
 		ctx->buf[0] = ptr;
+		error = cuMemsetD8((CUdeviceptr)ctx->buf[0], (unsigned char)0xa5, size);
+		if (error != CUDA_SUCCESS) {
+			printf("CUDA memset failed with error=%d\n", error);
+			rc = 1;
+			goto err_free_buf;
+		}
 		break;
 	}
 	// TODO: add static memory type
@@ -326,10 +342,11 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, size_t alignm
 		ptr = memalign(alignment, size);
 		#endif
 		if (!ptr) {
-			printf("Host allocation failure errno=%d\n", errno);
+			printf("error: malloc allocation failure errno=%d\n", errno);
 			rc = 1;
 			goto err_free_ctx;
 		}
+		memset(ptr, (unsigned char)0xa5, size);
 		if (CUDA_MEM_HOSTREGISTER == ctx->gpu_mem_type) {
 			// TODO: check CU_DEVICE_ATTRIBUTE_HOST_REGISTER_SUPPORTED
 			// NOTE: consider using CU_MEMHOSTREGISTER_PORTABLE|CU_MEMHOSTREGISTER_DEVICEMAP
@@ -1414,7 +1431,7 @@ int create_single_mr(struct pingpong_context *ctx, struct perftest_parameters *u
 		use_odp = user_param->use_odp;
 		#endif
 		if (pp_init_gpu(ctx, ctx->buff_size, user_param->cycle_buffer, user_param->cuda_ordinal, user_param->cuda_mem_type, user_param->cuda_mem_hints, use_odp)) {
-			fprintf(stderr, "Couldn't allocate work buf.\n");
+			fprintf(stderr, "Couldn't allocate CUDA work buf.\n");
 			return FAILURE;
 		}
 	} else
@@ -1428,7 +1445,7 @@ int create_single_mr(struct pingpong_context *ctx, struct perftest_parameters *u
 		if (pp_init_mmap(ctx, ctx->buff_size, user_param->mmap_file,
 				 user_param->mmap_offset))
 		{
-			fprintf(stderr, "Couldn't allocate work buf.\n");
+			fprintf(stderr, "Couldn't allocate mmapped work buf.\n");
 			return FAILURE;
 		}
 	} else {
