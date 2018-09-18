@@ -459,14 +459,14 @@ static void usage(const char *argv0, VerbType verb, TestType tst, int connection
 		printf("      --use_cuda ");
 		printf(" Use CUDA memory for RDMA testing.\n");
 		printf("      --cuda_use_gpu=<N> ");
-		printf(" Select GPU ordinal N for testing.\n");
+		printf(" Select GPU ordinal N for testing. Default is GPU 0.\n");
 		printf("      --cuda_mem_type=<value> ");
 		printf(" Set CUDA memory type <value>=0(device,default),1(managed),2(CUDA host alloc),3(malloc + CUDA host register),4(malloc).\n");
 		printf("      GPUDirect RDMA on CUDA managed memory requires --use_cuda and --odp.\n");
 		printf("      Inlining is not supported on CUDA device memory.\n");
 		printf("      --cuda_mem_hints=<value> ");
-		printf(" <value>=0(default),1(populate memory on host),2(populate memory on GPU),3(read-mostly)\n");
-		printf("      Populating memory works on both host and managed memory.\n");
+		printf(" <value>=0(use defaults),1(populate memory on host),2(populate memory on GPU),3(read-mostly and preteched on GPU)\n");
+		printf("      Memory hints are supported on both host and managed memory.\n");
 		#endif
 
 		#ifdef HAVE_VERBS_EXP
