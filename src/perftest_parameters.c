@@ -1124,10 +1124,6 @@ static void force_dependecies(struct perftest_parameters *user_param)
 		}
 	}
 
-	if (user_param->use_odp) {
-		fprintf(stdout," ODP enabled\n");
-	}
-
 	if(user_param->verb == ATOMIC && user_param->use_odp) {
 		printf(RESULT_LINE);
 		fprintf(stderr," ODP does not support ATOMICS for now\n");
