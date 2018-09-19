@@ -73,9 +73,9 @@ static int set_memory_hints(CUdeviceptr d_ptr, size_t size, CUdevice gpu_device,
 	case CUDA_MEM_HOSTALLOC:
 	case CUDA_MEM_DEVICE:
 	case CUDA_MEM_HOSTREGISTER:
-		printf("warning: memory hints are not supported on this memory type\n");
-		populate = 0;
-		prefetch = 0;
+		printf("error: memory hints are not supported on this memory type\n");
+		rc = 1;
+		goto err;
 		break;
 	default:
 		printf("error: invalid CUDA memory type\n");
