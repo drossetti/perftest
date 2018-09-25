@@ -54,6 +54,7 @@ struct raw_ethernet_info {
 };
 
 
+
 /* gen_eth_header .
  * Description :create raw Ethernet header on buffer
  *
@@ -64,13 +65,22 @@ struct raw_ethernet_info {
  *	 	eth_type - IP/or size of ptk
  *
  */
-
 struct ETH_header {
 	uint8_t dst_mac[6];
 	uint8_t src_mac[6];
 	uint16_t eth_type;
 }__attribute__((packed));
 
+struct ETH_vlan_header {
+        uint8_t dst_mac[6];
+        uint8_t src_mac[6];
+        uint32_t vlan_header;
+        uint16_t eth_type;
+}__attribute__((packed));
+
+#define VLAN_TPID (0x8100)
+#define VLAN_VID (0x001)
+#define VLAN_CFI (0)
 
 #if defined(__FreeBSD__)
 #if BYTE_ORDER == BIG_ENDIAN
@@ -148,7 +158,10 @@ void print_spec(struct ibv_exp_flow_attr* flow_rules,struct perftest_parameters*
 #else
 void print_spec(struct ibv_flow_attr* flow_rules,struct perftest_parameters* user_param);
 #endif
-void print_ethernet_header(struct ETH_header* p_ethernet_header);
+//void print_ethernet_header(struct ETH_header* p_ethernet_header);
+void print_ethernet_header(void* p_ethernet_header);
+//void print_ethernet_vlan_header(struct ETH_vlan_header* p_ethernet_header);
+void print_ethernet_vlan_header(void* p_ethernet_header);
 void print_ip_header(struct IP_V4_header* ip_header);
 void print_udp_header(struct UDP_header* udp_header);
 void print_pkt(void* pkt,struct perftest_parameters *user_param);
@@ -187,11 +200,13 @@ void build_pkt_on_buffer(struct ETH_header* eth_header,
  *	Parameters:
  *				user_param - user_parameters struct for this test
  *				ctx - Test Context.
+ *				buf - The QP's packet buffer.
  *				my_dest_info - ethernet information of me
  *				rem_dest_info - ethernet information of the remote
  */
 void create_raw_eth_pkt( struct perftest_parameters *user_param,
 		struct pingpong_context 	*ctx ,
+		void		 		*eth_header,
 		struct raw_ethernet_info	*my_dest_info,
 		struct raw_ethernet_info	*rem_dest_info);
 
@@ -295,5 +310,47 @@ static __inline void switch_smac_dmac(struct ibv_sge *sg)
 	memcpy((uint8_t *)eth_header->src_mac , (uint8_t *)eth_header->dst_mac ,sizeof(eth_header->src_mac));
 	memcpy((uint8_t *)eth_header->dst_mac  , tmp_mac ,sizeof(tmp_mac));
 }
+
+/* set_up_flow_rules
+ * Description: set the flow rules objects
+ *
+ *	Parameters:
+ *				flow_rules 	- Pointer to output, is set to header buffer and specification information
+ *				ctx 		- Test Context.
+ *				user_param 	- user_parameters struct for this test
+ *				local_port 	- the local port in the flow rule
+ *				remote_port 	- the remote port in the flow rule
+ */
+
+int set_up_flow_rules(
+		#ifdef HAVE_RAW_ETH_EXP
+		struct ibv_exp_flow_attr **flow_rules,
+		#else
+		struct ibv_flow_attr **flow_rules,
+		#endif
+		struct pingpong_context *ctx,
+		struct perftest_parameters *user_param,
+		int local_port,
+		int remote_port);
+/* set_up_fs_rules
+ * Description: set the flow rules objects  for FS rate test
+ *
+ *	Parameters:
+ *				flow_rules 	- Pointer to output, is set to header buffer and specification information
+ *				ctx 		- Test Context.
+ *				user_param 	- user_parameters struct for this test
+ *				allocated_flows	- number of flow ruled that are allocated and ready to be set
+ *
+ */
+
+int set_up_fs_rules(
+		#ifdef HAVE_RAW_ETH_EXP
+		struct ibv_exp_flow_attr **flow_rules,
+		#else
+		struct ibv_flow_attr **flow_rules,
+		#endif
+		struct pingpong_context *ctx,
+		struct perftest_parameters *user_param,
+		uint64_t allocated_flows);
 
 #endif /* RAW_ETHERNET_RESOURCES_H */

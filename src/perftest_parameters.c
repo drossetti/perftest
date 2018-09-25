@@ -9,12 +9,12 @@
 #include <sys/socket.h>
 #endif
 #include "perftest_parameters.h"
+#include "raw_ethernet_resources.h"
 #include<math.h>
 #define MAC_LEN (17)
 #define ETHERTYPE_LEN (6)
 #define MAC_ARR_LEN (6)
 #define HEX_BASE (16)
-
 static const char *connStr[] = {"RC","UC","UD","RawEth","XRC","DC"};
 static const char *testsStr[] = {"Send","RDMA_Write","RDMA_Read","Atomic"};
 static const char *portStates[] = {"Nop","Down","Init","Armed","","Active Defer"};
@@ -85,7 +85,6 @@ static int parse_mac_from_str(char *mac, u_int8_t *addr)
 	}
 	return SUCCESS;
 }
-
 static int parse_ethertype_from_str(char *ether_str, uint16_t *ethertype_val)
 {
 	if (strlen(ether_str) != ETHERTYPE_LEN) {
@@ -153,9 +152,10 @@ static int get_cache_line_size()
 		if (fp == NULL) {
 			return DEF_CACHE_LINE_SIZE;
 		}
-		fgets(line,10,fp);
-		size = atoi(line);
-		fclose(fp);
+		if(fgets(line,10,fp) != NULL) {
+			size = atoi(line);
+			fclose(fp);
+		}
 	}
 #endif
 	if (size <= 0)
@@ -169,8 +169,13 @@ static int get_cache_line_size()
 static void usage(const char *argv0, VerbType verb, TestType tst, int connection_type)
 {
 	printf("Usage:\n");
-	printf("  %s            start a server and wait for connection\n", argv0);
-	printf("  %s <host>     connect to server at <host>\n", argv0);
+
+	if (tst != FS_RATE) {
+		printf("  %s            start a server and wait for connection\n", argv0);
+		printf("  %s <host>     connect to server at <host>\n", argv0);
+	} else
+		printf("  %s             run a server to measure FS rate \n", argv0);
+
 	printf("\n");
 	printf("Options:\n");
 
@@ -216,6 +221,9 @@ static void usage(const char *argv0, VerbType verb, TestType tst, int connection
 	if (verb != WRITE && connection_type != RawEth) {
 		printf("  -e, --events ");
 		printf(" Sleep on CQ events (default poll)\n");
+
+		printf("  -X, --vector=<completion vector> ");
+		printf(" Set <completion vector> used for events\n");
 	}
 
 	printf("  -f, --margin ");
@@ -224,7 +232,7 @@ static void usage(const char *argv0, VerbType verb, TestType tst, int connection
 	printf("  -F, --CPU-freq ");
 	printf(" Do not show a warning even if cpufreq_ondemand module is loaded, and cpu-freq is not on max.\n");
 
-	if (verb == SEND) {
+	if (verb == SEND && tst != FS_RATE) {
 		printf("  -g, --mcg ");
 		printf(" Send messages to multicast group with 1 QP attached to it.\n");
 	}
@@ -232,7 +240,7 @@ static void usage(const char *argv0, VerbType verb, TestType tst, int connection
 	printf("  -h, --help ");
 	printf(" Show this help screen.\n");
 
-	if (tst == LAT) {
+	if (tst == LAT || tst == LAT_BY_BW || tst == FS_RATE) {
 		printf("  -H, --report-histogram ");
 		printf(" Print out all results (default print summary only)\n");
 	}
@@ -245,22 +253,24 @@ static void usage(const char *argv0, VerbType verb, TestType tst, int connection
 		printf(" Max size of message to be sent in inline\n");
 	}
 
-	if (tst == BW) {
+	if (tst == BW || tst == LAT_BY_BW) {
 		printf("  -l, --post_list=<list size>");
 		printf(" Post list of WQEs of <list size> size (instead of single post)\n");
 	}
 
-	if (connection_type == RawEth) {
-		printf("  -m, --mtu=<mtu> ");
-		printf(" MTU size : 64 - 9600 (default port mtu)\n");
-	} else {
-		printf("  -m, --mtu=<mtu> ");
-		printf(" MTU size : 256 - 4096 (default port mtu)\n");
-	}
+	if (tst != FS_RATE) {
+		if (connection_type == RawEth) {
+			printf("  -m, --mtu=<mtu> ");
+			printf(" MTU size : 64 - 9600 (default port mtu)\n");
+		} else {
+			printf("  -m, --mtu=<mtu> ");
+			printf(" MTU size : 256 - 4096 (default port mtu)\n");
+		}
 
-	if (verb == SEND) {
-		printf("  -M, --MGID=<multicast_gid> ");
-		printf(" In multicast, uses <multicast_gid> as the group MGID.\n");
+		if (verb == SEND) {
+			printf("  -M, --MGID=<multicast_gid> ");
+			printf(" In multicast, uses <multicast_gid> as the group MGID.\n");
+		}
 	}
 
 	printf("  -n, --iters=<iters> ");
@@ -284,8 +294,8 @@ static void usage(const char *argv0, VerbType verb, TestType tst, int connection
 	printf("  -p, --port=<port> ");
 	printf(" Listen on/connect to port <port> (default %d)\n",DEF_PORT);
 
-	if (tst == BW  && connection_type != RawEth) {
-		printf("  -q, --qp=<num of qp's>  Num of qp's(default %d)\n",DEF_NUM_QPS);
+	if (tst == BW ) {
+		printf("  -q, --qp=<num of qp's>  Num of qp's(default %d)\n", DEF_NUM_QPS);
 	}
 
 	if (tst == BW) {
@@ -293,7 +303,7 @@ static void usage(const char *argv0, VerbType verb, TestType tst, int connection
 		printf(" Generate Cqe only after <--cq-mod> completion\n");
 	}
 
-	if (verb == SEND) {
+	if (verb == SEND && tst != FS_RATE) {
 		printf("  -r, --rx-depth=<dep> ");
 		printf(" Rx queue size (default %d).",DEF_RX_SEND);
 		printf(" If using srq, rx-depth controls max-wr size of the srq\n");
@@ -306,24 +316,26 @@ static void usage(const char *argv0, VerbType verb, TestType tst, int connection
 
 	if (verb != ATOMIC) {
 		printf("  -s, --size=<size> ");
-		printf(" Size of message to exchange (default %d)\n",tst == LAT ? DEF_SIZE_LAT : DEF_SIZE_BW);
+		printf(" Size of message to exchange (default %d)\n", tst == LAT ? DEF_SIZE_LAT : DEF_SIZE_BW);
 	}
 
-	printf("  -S, --sl=<sl> ");
-	printf(" SL (default %d)\n",DEF_SL);
+	if (tst != FS_RATE) {
+		printf("  -S, --sl=<sl> ");
+		printf(" SL (default %d)\n",DEF_SL);
 
-	if (tst == BW) {
-		printf("  -t, --tx-depth=<dep> ");
-		printf(" Size of tx queue (default %d)\n",tst == LAT ? DEF_TX_LAT : DEF_TX_BW);
+		if (tst == BW || tst == LAT_BY_BW) {
+			printf("  -t, --tx-depth=<dep> ");
+			printf(" Size of tx queue (default %d)\n", tst == LAT ? DEF_TX_LAT : DEF_TX_BW);
+		}
+
+		printf("  -T, --tos=<tos value> ");
+		printf(" Set <tos_value> to RDMA-CM QPs. availible only with -R flag. values 0-256 (default off)\n");
 	}
-
-	printf("  -T, --tos=<tos value> ");
-	printf(" Set <tos_value> to RDMA-CM QPs. availible only with -R flag. values 0-256 (default off)\n");
 
 	printf("  -u, --qp-timeout=<timeout> ");
 	printf(" QP timeout, timeout value is 4 usec * 2 ^(timeout), default %d\n",DEF_QP_TIME);
 
-	if (tst == LAT) {
+	if (tst == LAT || tst == LAT_BY_BW || tst == FS_RATE) {
 		printf("  -U, --report-unsorted ");
 		printf(" (implies -H) print out unsorted results (default sorted)\n");
 	}
@@ -357,12 +369,19 @@ static void usage(const char *argv0, VerbType verb, TestType tst, int connection
 	printf("      --cpu_util ");
 	printf(" Show CPU Utilization in report, valid only in Duration mode \n");
 
-	printf("      --dlid ");
-	printf(" Set a Destination LID instead of getting it from the other side.\n");
+	if (tst != FS_RATE) {
+		printf("      --dlid ");
+		printf(" Set a Destination LID instead of getting it from the other side.\n");
+	}
 
 	if (connection_type != RawEth) {
 		printf("      --dont_xchg_versions ");
 		printf(" Do not exchange versions and MTU with other side \n");
+	}
+
+	if (tst != FS_RATE) {
+		printf("      --force-link=<value> ");
+		printf(" Force the link(s) to a specific type: IB or Ethernet.\n");
 	}
 
 	if (verb != WRITE) {
@@ -392,7 +411,7 @@ static void usage(const char *argv0, VerbType verb, TestType tst, int connection
 		printf(" Create memory region for each qp.\n");
 	}
 
-	#ifdef HAVE_ODP
+	#if defined HAVE_EX_ODP || defined HAVE_EXP_ODP
 	printf("      --odp ");
 	printf(" Use On Demand Paging instead of Memory Registration.\n");
 	#endif
@@ -401,7 +420,12 @@ static void usage(const char *argv0, VerbType verb, TestType tst, int connection
 	printf(" Set verbosity output level: bandwidth , message_rate, latency \n");
 	printf(" Latency measurement is Average calculation \n");
 
-	printf("      --pkey_index=<pkey index> PKey index to use for QP\n");
+	if (tst != FS_RATE) {
+		printf("      --perform_warm_up");
+		printf(" Perform some iterations before start measuring in order to warming-up memory cache, valid in Atomic, Read and Write BW tests\n");
+
+		printf("      --pkey_index=<pkey index> PKey index to use for QP\n");
+	}
 
 	if ( tst == BW ) {
 		printf("      --report-both ");
@@ -427,29 +451,43 @@ static void usage(const char *argv0, VerbType verb, TestType tst, int connection
 		printf(" Set retry count value in rdma_cm mode\n");
 	}
 
-	printf("      --tclass=<value> ");
-	printf(" Set the Traffic Class in GRH (if GRH is in use)\n");
+	if (tst != FS_RATE) {
+		printf("      --tclass=<value> ");
+		printf(" Set the Traffic Class in GRH (if GRH is in use)\n");
 
-	#ifdef HAVE_CUDA
-	printf("      --use_cuda ");
-	printf(" Use CUDA lib for GPU-Direct testing.\n");
-	#endif
+		#ifdef HAVE_CUDA
+		printf("      --use_cuda ");
+		printf(" Use CUDA memory for RDMA testing.\n");
+		printf("      --cuda_use_gpu=<N> ");
+		printf(" Select GPU ordinal N for testing. Default is GPU 0.\n");
+		printf("      --cuda_mem_type=<value> ");
+		printf(" Set CUDA memory type <value>=0(device,default),1(managed),2(CUDA host alloc),3(malloc + CUDA host register),4(malloc).\n");
+		printf("      GPUDirect RDMA on CUDA managed memory requires --use_cuda and --odp.\n");
+		printf("      Inlining is not supported on CUDA device memory.\n");
+		printf("      --cuda_mem_hints=<value> ");
+		printf(" <value>=0(use defaults),1(populate memory on host),2(populate memory on GPU),3(read-mostly and preteched on GPU)\n");
+		printf("      Memory hints are supported on both host and managed memory.\n");
+		#endif
+
+		#ifdef HAVE_VERBS_EXP
+		printf("      --use_exp ");
+		printf(" Use Experimental verbs in data path. Default is OFF.\n");
+		#endif
+
+		printf("      --use_hugepages ");
+		printf(" Use Hugepages instead of contig, memalign allocations.\n");
 
 
-	#ifdef HAVE_VERBS_EXP
-	printf("      --use_exp ");
-	printf(" Use Experimental verbs in data path. Default is OFF.\n");
-	#endif
+		#ifdef HAVE_ACCL_VERBS
+		printf("      --use_res_domain ");
+		printf(" Use shared resource domain\n");
 
-	#ifdef HAVE_ACCL_VERBS
-	printf("      --use_res_domain ");
-	printf(" Use shared resource domain\n");
+		printf("      --verb_type=<option> ");
+		printf(" Set verb type: normal, accl. Default is normal.\n");
+		#endif
+	}
 
-	printf("      --verb_type=<option> ");
-	printf(" Set verb type: normal, accl. Default is normal.\n");
-	#endif
-
-	if (tst == BW) {
+	if (tst == BW || tst == LAT_BY_BW) {
 		printf("      --wait_destroy=<seconds> ");
 		printf(" Wait <seconds> before destroying allocated resources (QP/CQ/PD/MR..)\n");
 
@@ -461,13 +499,19 @@ static void usage(const char *argv0, VerbType verb, TestType tst, int connection
 		printf(" Set the maximum rate of sent packages. default unit is [Gbps]. use --rate_units to change that.\n");
 
 		printf("      --rate_units=<units>");
-		printf(" [Mgp] Set the units for rate limit to MBps (M), Gbps (g) or pps (p). default is Gbps (g) , pps not supported when HW limit.\n");
+		printf(" [Mgp] Set the units for rate limit to MBps (M), Gbps (g) or pps (p). default is Gbps (g).\n");
+		printf("      Note (1): pps not supported with HW limit.\n");
+		printf("      Note (2): When using PP rate_units is forced to Kbps.\n");
 
 		printf("      --rate_limit_type=<type>");
-		printf(" [HW/SW] Limit the QP's by HW or by SW. Disabled by default. when rate_limit is specified HW limit is Default .\n");
+		printf(" [HW/SW/PP] Limit the QP's by HW, PP or by SW. Disabled by default. When rate_limit Not is specified HW limit is Default.\n");
+		printf("      Note (1) in Latency under load test SW rate limit is forced\n");
 
 	}
-
+	#if defined HAVE_OOO_ATTR || defined HAVE_EXP_OOO_ATTR
+	printf("      --use_ooo ");
+	printf(" Use out of order data placement\n");
+	#endif
 	putchar('\n');
 }
 /******************************************************************************
@@ -511,25 +555,45 @@ void usage_raw_ethernet(TestType tst)
 	printf("  -Z, --server ");
 	printf(" choose server side for the current machine (--server/--client must be selected )\n");
 
-	printf("  -P, --client ");
-	printf(" choose client side for the current machine (--server/--client must be selected)\n");
+	printf("      --vlan_en ");
+	printf(" insert vlan tag in ethernet header.\n");
 
-	printf("  -v, --mac_fwd ");
-	printf(" run mac forwarding test \n");
+	printf("      --vlan_pcp ");
+	printf(" specify vlan_pcp value for vlan tag, 0~7. 8 means different vlan_pcp for each packet\n");
 
-	#ifdef HAVE_SCATTER_FCS
-	printf("      --disable_fcs ");
-	printf(" Disable Scatter FCS feature. (Scatter FCS is enabled by default when using --use_exp flag). \n");
-	#endif
+	if (tst != FS_RATE) {
+		printf("  -P, --client ");
+		printf(" choose client side for the current machine (--server/--client must be selected)\n");
 
-	printf("      --flows");
-	printf(" set number of TCP/UDP flows, starting from <src_port, dst_port>. \n");
+		printf("  -v, --mac_fwd ");
+		printf(" run mac forwarding test \n");
 
-	printf("      --flows_burst");
-	printf(" set number of burst size per TCP/UDP flow. \n");
+		#ifdef HAVE_SCATTER_FCS
+		printf("      --disable_fcs ");
+		printf(" Disable Scatter FCS feature. (Scatter FCS is enabled by default when using --use_exp flag). \n");
+		#endif
 
-	printf("      --promiscuous");
-	printf(" run promiscuous mode.\n");
+		printf("      --flows");
+		printf(" set number of TCP/UDP flows, starting from <src_port, dst_port>. \n");
+
+		printf("      --flows_burst");
+		printf(" set number of burst size per TCP/UDP flow. \n");
+
+		printf("      --promiscuous");
+		printf(" run promiscuous mode.\n");
+
+		printf("      --reply_every ");
+		printf(" in latency test, receiver pong after number of received pings\n");
+
+		#if defined HAVE_SNIFFER || defined HAVE_SNIFFER_EXP
+		printf("      --sniffer");
+		printf(" run sniffer mode.\n");
+		#endif
+
+		printf("      --flow_label ");
+		printf(" IPv6 flow label\n");
+
+	}
 
 	printf("      --tcp ");
 	printf(" send TCP Packets. must include IP and Ports information.\n");
@@ -539,8 +603,6 @@ void usage_raw_ethernet(TestType tst)
 	printf(" send IPv6 Packets.\n");
 	#endif
 
-	printf("      --flow_label ");
-	printf(" IPv6 flow label\n");
 
 	printf("\n");
 
@@ -553,13 +615,17 @@ static void init_perftest_params(struct perftest_parameters *user_param)
 	user_param->port		= DEF_PORT;
 	user_param->ib_port		= DEF_IB_PORT;
 	user_param->ib_port2		= DEF_IB_PORT2;
+	user_param->link_type		= LINK_UNSPEC;
+	user_param->link_type2		= LINK_UNSPEC;
 	user_param->size		= (user_param->tst == BW ) ? DEF_SIZE_BW : DEF_SIZE_LAT;
-	user_param->tx_depth		= (user_param->tst == BW ) ? DEF_TX_BW : DEF_TX_LAT;
+	user_param->tx_depth		= (user_param->tst == BW || user_param->tst == LAT_BY_BW ) ? DEF_TX_BW : DEF_TX_LAT;
 	user_param->qp_timeout		= DEF_QP_TIME;
 	user_param->test_method		= RUN_REGULAR;
 	user_param->cpu_freq_f		= OFF;
 	user_param->connection_type	= (user_param->connection_type == RawEth) ? RawEth : RC;
 	user_param->use_event		= OFF;
+	user_param->eq_num		= 0;
+	user_param->use_eq_num		= OFF;
 	user_param->num_of_qps		= DEF_NUM_QPS;
 	user_param->gid_index		= DEF_GID_INDEX;
 	user_param->gid_index2		= DEF_GID_INDEX;
@@ -603,12 +669,23 @@ static void init_perftest_params(struct perftest_parameters *user_param)
 	user_param->rate_limit_type	= DISABLE_RATE_LIMIT;
 	user_param->is_rate_limit_type  = 0;
 	user_param->output		= -1;
+	#ifdef HAVE_CUDA
 	user_param->use_cuda		= 0;
+	user_param->cuda_ordinal        = 0;
+	user_param->cuda_mem_type	= CUDA_MEM_DEVICE;
+	user_param->cuda_mem_hints	= CUDA_MEM_NO_HINTS;
+	#endif
 	user_param->mmap_file		= NULL;
 	user_param->mmap_offset		= 0;
 	user_param->iters_per_port[0]	= 0;
 	user_param->iters_per_port[1]	= 0;
 	user_param->wait_destroy	= 0;
+	user_param->is_old_raw_eth_param = 0;
+	user_param->is_new_raw_eth_param = 0;
+	user_param->reply_every		= 1;
+	user_param->vlan_en             = OFF;
+	user_param->vlan_pcp		= 1;
+	user_param->print_eth_func 	= &print_ethernet_header;
 
 	if (user_param->tst == LAT) {
 		user_param->r_flag->unsorted	= OFF;
@@ -629,7 +706,9 @@ static void init_perftest_params(struct perftest_parameters *user_param)
 	user_param->ipv6			= 0;
 	user_param->report_per_port		= 0;
 	user_param->use_odp			= 0;
+	user_param->use_hugepages		= 0;
 	user_param->use_promiscuous		= 0;
+	user_param->use_sniffer			= 0;
 	user_param->check_alive_exited		= 0;
 	user_param->raw_mcast			= 0;
 	user_param->masked_atomics		= 0;
@@ -649,6 +728,8 @@ static void init_perftest_params(struct perftest_parameters *user_param)
 	user_param->disable_fcs		= 0;
 	user_param->flows		= DEF_FLOWS;
 	user_param->flows_burst		= 1;
+	user_param->perform_warm_up	= 0;
+	user_param->use_ooo		= 0;
 }
 
 /******************************************************************************
@@ -787,17 +868,21 @@ void flow_rules_force_dependecies(struct perftest_parameters *user_param)
 			if (user_param->iters / min_iter_req < 1) {
 				fprintf(stderr, " Current iteration number will not complete full cycle on all flows, it need to be multiple of the product between flows and flows_burst\n");
 				fprintf(stderr, " Set  N*%d Iterations \n", user_param->flows * user_param->flows_burst);
-				exit(1);
+				exit(FAILURE);
 			}
+		}
+		if (user_param->tst == FS_RATE) {
+			fprintf(stderr, "FS rate test not requiring flows parameter\n");
+			exit(FAILURE);
 		}
 		if (user_param->duplex) {
 			fprintf(stderr, " Flows is currently designed to work with unidir tests only\n");
-			exit(1);
+			exit(FAILURE);
 		}
 	} else {
 		if (user_param->flows_burst  > 1) {
 			fprintf(stderr, " Flows burst is designed to work with more then single flow\n");
-			exit(1);
+			exit(FAILURE);
 		}
 	}
 	return;
@@ -823,6 +908,12 @@ static void force_dependecies(struct perftest_parameters *user_param)
 				user_param->rx_depth = (user_param->iters < UC_MAX_RX) ? user_param->iters : UC_MAX_RX;
 			}
 		}
+	}
+
+	if (user_param->tst == LAT_BY_BW && user_param->rate_limit_type == DISABLE_RATE_LIMIT) {
+		if (user_param->output == FULL_VERBOSITY)
+			printf("rate_limit type is forced to SW.\n");
+		user_param->rate_limit_type = SW_RATE_LIMIT;
 	}
 
 	if (user_param->cq_mod > user_param->tx_depth) {
@@ -857,6 +948,8 @@ static void force_dependecies(struct perftest_parameters *user_param)
 			printf(" Dual-port mode not supported in multicast feature\n");
 			exit (1);
 		}
+		if (user_param->link_type != LINK_UNSPEC)
+			user_param->link_type2 = user_param->link_type;
 	}
 
 	if (user_param->post_list > 1) {
@@ -901,11 +994,6 @@ static void force_dependecies(struct perftest_parameters *user_param)
 			exit(1);
 		}
 
-		if (user_param->num_of_qps > 1 && !user_param->use_rss) {
-			printf(RESULT_LINE);
-			fprintf(stdout," Raw Ethernet test supports only 1 QP for now\n");
-			exit(1);
-		}
 		if (user_param->use_rdma_cm == ON || user_param->work_rdma_cm == ON) {
 			fprintf(stderr," RDMA CM isn't supported for Raw Ethernet tests\n");
 			exit(1);
@@ -1103,7 +1191,7 @@ static void force_dependecies(struct perftest_parameters *user_param)
 		user_param->srq_exists = 1;
 
 	if (user_param->burst_size > 0) {
-		if (user_param->rate_limit_type == DISABLE_RATE_LIMIT) {
+		if (user_param->rate_limit_type == DISABLE_RATE_LIMIT && user_param->tst != LAT_BY_BW ) {
 			printf(RESULT_LINE);
 			fprintf(stderr," Can't enable burst mode when rate limiter is off\n");
 			exit(1);
@@ -1154,9 +1242,45 @@ static void force_dependecies(struct perftest_parameters *user_param)
 			}
 			user_param->valid_hw_rate_limit = rate_to_set;
 		}
+	} else if (user_param->rate_limit_type == PP_RATE_LIMIT) {
+		if (user_param->rate_limit < 0) {
+			fprintf(stderr," Must specify a rate limit when using Packet Pacing.\n Please add --rate_limit=<limit>.\n");
+			exit(1);
+		}
+		if (user_param->connection_type != RawEth) {
+			fprintf(stderr,"Packet Pacing is only supported for Raw Ethernet.\n");
+			exit(1);
+		}
+
+		if (user_param->rate_units != MEGA_BYTE_PS) {
+			fprintf(stderr,"Packet Pacing only supports MEGA_BYTE_PS.\n");
+			exit(1);
+		}
+
+		user_param->rate_limit = user_param->rate_limit * 8 * 1024;
 	}
 
-	if (user_param->output != -1) {
+	if (user_param->tst == LAT_BY_BW) {
+		if ( user_param->test_type == DURATION) {
+			fprintf(stderr, "Latency under load test is currently support iteration mode only.\n");
+			exit(1);
+		}
+		if (user_param->num_of_qps > 1) {
+			fprintf(stderr, "Multi QP is not supported in LAT under load test\n");
+			exit(1);
+		}
+		if (user_param->duplex) {
+			fprintf(stderr, "Bi-Dir is not supported in LAT under load test\n");
+			exit(1);
+		}
+		if(user_param->output != FULL_VERBOSITY && user_param->output != OUTPUT_LAT) {
+			printf(RESULT_LINE);
+			fprintf(stderr," Output verbosity level for BW can be latency\n");
+			exit(1);
+		}
+	}
+
+	if (user_param->output != FULL_VERBOSITY) {
 		if (user_param->tst == BW && !(user_param->output == OUTPUT_BW || user_param->output == OUTPUT_MR)) {
 			printf(RESULT_LINE);
 			fprintf(stderr," Output verbosity level for BW can be: bandwidth, message_rate\n");
@@ -1187,14 +1311,6 @@ static void force_dependecies(struct perftest_parameters *user_param)
 	#endif
 
 	#ifdef HAVE_CUDA
-	if (user_param->use_cuda) {
-		if (user_param->tst != BW) {
-			printf(RESULT_LINE);
-			fprintf(stderr," Perftest supports CUDA only in BW tests\n");
-			exit(1);
-		}
-	}
-
 	if (user_param->use_cuda && user_param->mmap_file != NULL) {
 		printf(RESULT_LINE);
 		fprintf(stderr,"You cannot use CUDA and an mmap'd file at the same time\n");
@@ -1224,6 +1340,11 @@ static void force_dependecies(struct perftest_parameters *user_param)
 	if (!(user_param->duration > 2*user_param->margin)) {
 		printf(RESULT_LINE);
 		fprintf(stderr, "please check that DURATION > 2*MARGIN\n");
+		exit(1);
+	}
+
+	if((user_param->use_event == OFF) && user_param->use_eq_num == ON) {
+		fprintf(stderr, " Events must be enabled to select a completion vector\n");
 		exit(1);
 	}
 
@@ -1265,6 +1386,12 @@ static void force_dependecies(struct perftest_parameters *user_param)
 			exit(1);
 		}
 	}
+	if (user_param->perform_warm_up &&
+	    !(user_param->tst == BW &&
+	    (user_param->verb == ATOMIC || user_param->verb == WRITE || user_param->verb == READ))) {
+		fprintf(stderr, "Perform warm up is available in ATOMIC, READ and WRITE BW tests only");
+		exit(1);
+	}
 	#endif
 
 	return;
@@ -1287,9 +1414,9 @@ const char *transport_str(enum ibv_transport_type type)
 }
 
 /******************************************************************************
- *
+ * Try to map verbs' link layer types to a descriptive string or "Unknown"
  ******************************************************************************/
-const char *link_layer_str(uint8_t link_layer)
+const char *link_layer_str(int8_t link_layer)
 {
 	switch (link_layer) {
 
@@ -1298,13 +1425,22 @@ const char *link_layer_str(uint8_t link_layer)
 			return "IB";
 		case IBV_LINK_LAYER_ETHERNET:
 			return "Ethernet";
-		#ifdef HAVE_SCIF
-		case IBV_LINK_LAYER_SCIF:
-			return "SCIF";
-		#endif
 		default:
 			return "Unknown";
 	}
+}
+
+/******************************************************************************
+ * Try to parse a string to a verbs link layer or LINK_FAILURE
+ ******************************************************************************/
+const int str_link_layer(const char *str)
+{
+	if (strncasecmp("IB", str, 2) == 0)
+		return IBV_LINK_LAYER_INFINIBAND;
+	else if (strncasecmp("Ethernet", str, 8) == 0)
+		return IBV_LINK_LAYER_ETHERNET;
+	else
+		return LINK_FAILURE;
 }
 
 /******************************************************************************
@@ -1326,6 +1462,7 @@ enum ctx_device ib_dev_name(struct ibv_context *context)
 			case 4  : dev_fname = CHELSIO_T4; break;
 			case 11 :
 			case 5  : dev_fname = CHELSIO_T5; break;
+			case 6  : dev_fname = CHELSIO_T6; break;
 			default : dev_fname = UNKNOWN; break;
 		}
 
@@ -1339,6 +1476,10 @@ enum ctx_device ib_dev_name(struct ibv_context *context)
 			case 4116  : dev_fname = CONNECTX4; break;
 			case 4117  : dev_fname = CONNECTX4LX; break;
 			case 4118  : dev_fname = CONNECTX4LX; break;
+			case 4119  : dev_fname = CONNECTX5; break;
+			case 4120  : dev_fname = CONNECTX5; break;
+			case 4121  : dev_fname = CONNECTX5EX; break;
+			case 4122  : dev_fname = CONNECTX5EX; break;
 			case 4113  : dev_fname = CONNECTIB; break;
 			case 4099  : dev_fname = CONNECTX3; break;
 			case 4100  : dev_fname = CONNECTX3; break;
@@ -1419,32 +1560,63 @@ enum ibv_mtu set_mtu(struct ibv_context *context,uint8_t ib_port,int user_mtu)
 }
 
 /******************************************************************************
+ * Set both link layers and return SUCCESS if both ports are active.
+ * FAILURE is returned when requested port/link is not active/known except
+ * when the link type is over-rode (--force-link="..."), in which case FAILURE
+ * is returned only when the link(s) are not active.
  *
+ * When --force-link is specified both ports are over-rode (ie no support for
+ * forcing different link types on different ports).
  ******************************************************************************/
-static uint8_t set_link_layer(struct ibv_context *context,uint8_t ib_port)
+static int set_link_layer(struct ibv_context *context, struct perftest_parameters *params)
 {
 	struct ibv_port_attr port_attr;
-	uint8_t curr_link;
+	int8_t curr_link = params->link_type;
 
-	if (ibv_query_port(context,ib_port,&port_attr)) {
-		fprintf(stderr," Unable to query port attributes\n");
-		return LINK_FAILURE;
+	if (ibv_query_port(context, params->ib_port, &port_attr)) {
+		fprintf(stderr, " Unable to query port %d attributes\n", params->ib_port);
+		return FAILURE;
 	}
+
+	if (curr_link == LINK_UNSPEC)
+		params->link_type = port_attr.link_layer;
 
 	if (port_attr.state != IBV_PORT_ACTIVE) {
-		fprintf(stderr," Port number %d state is %s\n"
-				,ib_port
+		fprintf(stderr, " Port number %d state is %s\n"
+				,params->ib_port
 				,portStates[port_attr.state]);
-		return LINK_FAILURE;
+		return FAILURE;
 	}
 
-	curr_link = port_attr.link_layer;
-	if (!strcmp(link_layer_str(curr_link),"Unknown")) {
-		fprintf(stderr," Unable to determine link layer \n");
-		return LINK_FAILURE;
+	if (strcmp("Unknown", link_layer_str(params->link_type)) == 0) {
+		fprintf(stderr, "Link layer on port %d is Unknown\n", params->ib_port);
+		return FAILURE;
 	}
 
-	return port_attr.link_layer;
+	if (params->dualport == ON) {
+		curr_link = params->link_type2;
+		if (ibv_query_port(context, params->ib_port2, &port_attr)) {
+			fprintf(stderr, " Unable to query port %d attributes\n", params->ib_port2);
+			return FAILURE;
+		}
+
+		if (curr_link == LINK_UNSPEC)
+			params->link_type2 = port_attr.link_layer;
+
+		if (port_attr.state != IBV_PORT_ACTIVE) {
+			fprintf(stderr, " Port number %d state is %s\n"
+				,params->ib_port2
+				,portStates[port_attr.state]);
+			return FAILURE;
+		}
+
+		if (strcmp("Unknown", link_layer_str(params->link_type2)) == 0) {
+			fprintf(stderr, "Link layer on port %d is Unknown\n", params->ib_port2);
+			return FAILURE;
+		}
+	}
+
+	return SUCCESS;
 }
 
 /******************************************************************************
@@ -1490,23 +1662,59 @@ static void ctx_set_max_inline(struct ibv_context *context,struct perftest_param
 	}
 
 	if (user_param->inline_size == DEF_INLINE) {
-
-		if (user_param->tst ==LAT) {
-
+		user_param->inline_size = 0;
+		if (user_param->tst == LAT) {
+#ifdef HAVE_CUDA
+			if (user_param->use_cuda && (CUDA_MEM_DEVICE == user_param->cuda_mem_type))
+				fprintf(stderr," Inlining of CUDA device memory is not supported, keeping it set to 0B.\n");
+			else
+#endif
 			switch(user_param->verb) {
-
 				case WRITE: user_param->inline_size = (user_param->connection_type == DC)? DEF_INLINE_DC : DEF_INLINE_WRITE; break;
 				case SEND : user_param->inline_size = (user_param->connection_type == DC)? DEF_INLINE_DC : (user_param->connection_type == UD)? DEF_INLINE_SEND_UD :
 					    ((user_param->connection_type == XRC) ? DEF_INLINE_SEND_XRC : DEF_INLINE_SEND_RC_UC) ; break;
 				default   : user_param->inline_size = 0;
 			}
 
-		} else {
-			user_param->inline_size = 0;
 		}
 	}
 
 	return;
+}
+/******************************************************************************
+ *
+ ******************************************************************************/
+void set_raw_eth_parameters(struct perftest_parameters *user_param)
+{
+	int i;
+
+	if (user_param->is_new_raw_eth_param == 1 && user_param->is_old_raw_eth_param == 1) {
+		printf(RESULT_LINE);
+		fprintf(stderr," Invalid Command line.\nMix of source with local|remote and dest with local|remote is not supported.\n");
+		fprintf(stderr,"For L2 tests you must enter local and remote mac  by this format --local_mac XX:XX:XX:XX:XX:XX --remote_mac XX:XX:XX:XX:XX:XX\n");
+		fprintf(stderr,"For L3 tests You must add also local and remote ip  by this format --local_ip X.X.X.X --remote_ip X.X.X.X\n");
+		fprintf(stderr,"For L4 you need to add also local and remote port  by this format --local_port XXXX  --remote_port XXXX\n");
+		exit(1);
+	}
+	if (user_param->is_new_raw_eth_param) {
+		for (i = 0; i < MAC_ARR_LEN; i++)
+		{
+			user_param->source_mac[i] = user_param->local_mac[i];
+			user_param->dest_mac[i] = user_param->remote_mac[i];
+		}
+
+		if (user_param->machine == SERVER) {
+			user_param->server_ip = user_param->local_ip;
+			user_param->client_ip = user_param->remote_ip;
+			user_param->server_port = user_param->local_port;
+			user_param->client_port = user_param->remote_port;
+		} else if (user_param->machine == CLIENT) {
+			user_param->server_ip = user_param->remote_ip;
+			user_param->client_ip = user_param->local_ip;
+			user_param->server_port = user_param->remote_port;
+			user_param->client_port = user_param->local_port;
+		}
+	}
 }
 /******************************************************************************
  *
@@ -1534,14 +1742,21 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 	static int retry_count_flag = 0;
 	static int dont_xchg_versions_flag = 0;
 	static int use_exp_flag = 0;
+	#ifdef HAVE_CUDA
 	static int use_cuda_flag = 0;
+	static int cuda_ordinal_flag = 0;
+	static int cuda_mem_type_flag = 0;
+	static int cuda_mem_hints_flag = 0;
+	#endif
 	static int mmap_file_flag = 0;
 	static int mmap_offset_flag = 0;
 	static int ipv6_flag = 0;
 	static int raw_ipv6_flag = 0;
 	static int report_per_port_flag = 0;
 	static int odp_flag = 0;
+	static int hugepages_flag = 0;
 	static int use_promiscuous_flag = 0;
+	static int use_sniffer_flag = 0;
 	static int raw_mcast_flag = 0;
 	static int verb_type_flag = 0;
 	static int use_res_domain_flag = 0;
@@ -1552,9 +1767,23 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 	static int disable_fcs_flag = 0;
 	static int flows_flag = 0;
 	static int flows_burst_flag = 0;
+	static int force_link_flag = 0;
+	static int local_ip_flag = 0;
+	static int remote_ip_flag = 0;
+	static int local_port_flag = 0;
+	static int remote_port_flag = 0;
+	static int local_mac_flag = 0;
+	static int remote_mac_flag = 0;
+	static int reply_every_flag = 0;
+	static int perform_warm_up_flag = 0;
+	static int use_ooo_flag = 0;
+	static int vlan_en = 0;
+	static int vlan_pcp_flag = 0;
 
 	char *server_ip = NULL;
 	char *client_ip = NULL;
+	char *local_ip = NULL;
+	char *remote_ip = NULL;
 
 	init_perftest_params(user_param);
 
@@ -1578,6 +1807,7 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 			{ .name = "connection",		.has_arg = 1, .val = 'c' },
 			{ .name = "qp",			.has_arg = 1, .val = 'q' },
 			{ .name = "events",		.has_arg = 0, .val = 'e' },
+			{ .name = "vector",		.has_arg = 1, .val = 'X' },
 			{ .name = "inline_size",	.has_arg = 1, .val = 'I' },
 			{ .name = "outs",		.has_arg = 1, .val = 'o' },
 			{ .name = "mcg",		.has_arg = 0, .val = 'g' },
@@ -1612,6 +1842,13 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 			{ .name = "client",		.has_arg = 0, .val = 'P' },
 			{ .name = "mac_fwd",		.has_arg = 0, .val = 'v' },
 			{ .name = "use_rss",		.has_arg = 0, .val = 'G' },
+			{ .name = "force-link",		.has_arg = 1, .flag = &force_link_flag, .val = 1},
+			{ .name = "remote_mac",		.has_arg = 1, .flag = &remote_mac_flag, .val = 1 },
+			{ .name = "local_mac",		.has_arg = 1, .flag = &local_mac_flag, .val = 1 },
+			{ .name = "remote_ip",		.has_arg = 1, .flag = &remote_ip_flag, .val = 1 },
+			{ .name = "local_ip",		.has_arg = 1, .flag = &local_ip_flag, .val = 1 },
+			{ .name = "remote_port",	.has_arg = 1, .flag = &remote_port_flag, .val = 1 },
+			{ .name = "local_port",		.has_arg = 1, .flag = &local_port_flag, .val = 1 },
 			{ .name = "run_infinitely",	.has_arg = 0, .flag = &run_inf_flag, .val = 1 },
 			{ .name = "report_gbits",	.has_arg = 0, .flag = &report_fmt_flag, .val = 1},
 			{ .name = "use-srq",		.has_arg = 0, .flag = &srq_flag, .val = 1},
@@ -1630,7 +1867,12 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 			{ .name = "flow_label",		.has_arg = 1, .flag = &flow_label_flag, .val = 1},
 			{ .name = "retry_count",	.has_arg = 1, .flag = &retry_count_flag, .val = 1},
 			{ .name = "dont_xchg_versions",	.has_arg = 0, .flag = &dont_xchg_versions_flag, .val = 1},
+			#ifdef HAVE_CUDA
 			{ .name = "use_cuda",		.has_arg = 0, .flag = &use_cuda_flag, .val = 1},
+			{ .name = "cuda_use_gpu",	.has_arg = required_argument, .flag = &cuda_ordinal_flag, .val = 1},
+			{ .name = "cuda_mem_type",	.has_arg = required_argument, .flag = &cuda_mem_type_flag, .val = 1},
+			{ .name = "cuda_mem_hints",	.has_arg = required_argument, .flag = &cuda_mem_hints_flag, .val = 1},
+			#endif
 			{ .name = "mmap",		.has_arg = 1, .flag = &mmap_file_flag, .val = 1},
 			{ .name = "mmap-offset",	.has_arg = 1, .flag = &mmap_offset_flag, .val = 1},
 			{ .name = "ipv6",		.has_arg = 0, .flag = &ipv6_flag, .val = 1},
@@ -1639,7 +1881,11 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 			#endif
 			{ .name = "report-per-port",	.has_arg = 0, .flag = &report_per_port_flag, .val = 1},
 			{ .name = "odp",		.has_arg = 0, .flag = &odp_flag, .val = 1},
+			{ .name = "use_hugepages",		.has_arg = 0, .flag = &hugepages_flag, .val = 1},
 			{ .name = "promiscuous",	.has_arg = 0, .flag = &use_promiscuous_flag, .val = 1},
+			#if defined HAVE_SNIFFER || defined HAVE_SNIFFER_EXP
+			{ .name = "sniffer",		.has_arg = 0, .flag = &use_sniffer_flag, .val = 1},
+			#endif
 			{ .name = "raw_mcast",		.has_arg = 0, .flag = &raw_mcast_flag, .val = 1},
 			#ifdef HAVE_VERBS_EXP
 			{ .name = "use_exp",		.has_arg = 0, .flag = &use_exp_flag, .val = 1},
@@ -1657,9 +1903,17 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 			#endif
 			{ .name = "flows",		.has_arg = 1, .flag = &flows_flag, .val = 1},
 			{ .name = "flows_burst",	.has_arg = 1, .flag = &flows_burst_flag, .val = 1},
+			{ .name = "reply_every",	.has_arg = 1, .flag = &reply_every_flag, .val = 1},
+			{ .name = "perform_warm_up",	.has_arg = 0, .flag = &perform_warm_up_flag, .val = 1},
+			{ .name = "vlan_en",            .has_arg = 0, .flag = &vlan_en, .val = 1 },
+			{ .name = "vlan_pcp",		.has_arg = 1, .flag = &vlan_pcp_flag, .val = 1 },
+
+			#if defined HAVE_OOO_ATTR || defined HAVE_EXP_OOO_ATTR
+			{ .name = "use_ooo",		.has_arg = 0, .flag = &use_ooo_flag, .val = 1},
+			#endif
 			{ 0 }
 		};
-		c = getopt_long(argc,argv,"w:y:p:d:i:m:s:n:t:u:S:x:c:q:I:o:M:r:Q:A:l:D:f:B:T:E:J:j:K:k:aFegzRvhbNVCHUOZP",long_options,NULL);
+		c = getopt_long(argc,argv,"w:y:p:d:i:m:s:n:t:u:S:x:c:q:I:o:M:r:Q:A:l:D:f:B:T:E:J:j:K:k:X:aFegzRvhbNVCHUOZP",long_options,NULL);
 
 		if (c == -1)
 			break;
@@ -1685,10 +1939,9 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 			case 'x': CHECK_VALUE(user_param->gid_index, uint8_t, MIN_GID_IX, MAX_GID_IX, "Gid index");
 				  user_param->use_gid_user = 1; break;
 			case 'c': change_conn_type(&user_param->connection_type,user_param->verb,optarg); break;
-			case 'q':
-				  if (user_param->tst != BW) {
-					  fprintf(stderr," Multiple QPs only available on bw tests\n");
-					  return 1;
+			case 'q': if (user_param->tst != BW) {
+					fprintf(stderr," Multiple QPs only available on bw tests\n");
+					return 1;
 				  }
 				  CHECK_VALUE(user_param->num_of_qps,int,MIN_QP_NUM,MAX_QP_NUM,"num of Qps");
 				  break;
@@ -1729,6 +1982,7 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 				  break;
 			case 'l': user_param->post_list = strtol(optarg, NULL, 0); break;
 			case 'D': user_param->duration = strtol(optarg, NULL, 0);
+				printf("get the pcpc flag %s\n",optarg);
 				  if (user_param->duration <= 0) {
 					  fprintf(stderr," Duration period must be greater than 0\n");
 					  return 1;
@@ -1774,7 +2028,16 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 				  if (user_param->verb == WRITE) {
 					  fprintf(stderr," Events feature not available on WRITE verb\n");
 					  return 1;
-				  } break;
+				  }
+				  break;
+			case 'X':
+				  if (user_param->verb == WRITE) {
+					  fprintf(stderr, " Events feature not available on WRITE verb\n");
+					  return 1;
+				  }
+				  user_param->use_eq_num = ON;
+				  CHECK_VALUE(user_param->eq_num, int, MIN_EQ_NUM, MAX_EQ_NUM, "EQN");
+				  break;
 			case 'b': user_param->duplex = ON;
 				  if (user_param->tst == LAT) {
 					  fprintf(stderr," Bidirectional is only available in BW test\n");
@@ -1798,38 +2061,43 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 					  return 1;
 				  } break;
 			case 'H':
-				  if (user_param->tst != LAT) {
-					  fprintf(stderr," Availible only on Latency tests\n");
+				  if (user_param->tst == BW) {
+					  fprintf(stderr," Available only on Latency tests\n");
 					  return 1;
 				  }
 				  user_param->r_flag->histogram = ON;
 				  break;
 			case 'U':
-				  if (user_param->tst != LAT) {
-					  fprintf(stderr," Availible only on Latency tests\n");
+				  if (user_param->tst == BW) {
+					fprintf(stderr," is Available only on Latency tests\n");
 					  return 1;
 				  }
 				  user_param->r_flag->unsorted = ON;
 				  break;
 			case 'B':
+				  user_param->is_old_raw_eth_param = 1;
 				  user_param->is_source_mac = ON;
 				  if(parse_mac_from_str(optarg, user_param->source_mac))
 					  return FAILURE;
 				  break;
 			case 'E':
+				  user_param->is_old_raw_eth_param = 1;
 				  user_param->is_dest_mac = ON;
 				  if(parse_mac_from_str(optarg, user_param->dest_mac))
 					  return FAILURE;
 				  break;
 			case 'J':
+				  user_param->is_old_raw_eth_param = 1;
 				  user_param->is_server_ip = ON;
 				  server_ip = optarg;
 				  break;
 			case 'j':
+				  user_param->is_old_raw_eth_param = 1;
 				  user_param->is_client_ip = ON;
 				  client_ip = optarg;
 				  break;
 			case 'K':
+				  user_param->is_old_raw_eth_param = 1;
 				  user_param->is_server_port = ON;
 				  user_param->server_port = strtol(optarg, NULL, 0);
 				  if(OFF == check_if_valid_udp_port(user_param->server_port)) {
@@ -1838,6 +2106,7 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 				  }
 				  break;
 			case 'k':
+				  user_param->is_old_raw_eth_param = 1;
 				  user_param->is_client_port = ON;
 				  user_param->client_port = strtol(optarg, NULL, 0);
 				  if(OFF == check_if_valid_udp_port(user_param->client_port)) {
@@ -1873,6 +2142,28 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 			case 'v': user_param->mac_fwd = ON; break;
 			case 'G': user_param->use_rss = ON; break;
 			case 0: /* required for long options to work. */
+				#ifdef HAVE_CUDA
+				if (cuda_ordinal_flag) {
+					user_param->cuda_ordinal = strtol(optarg,NULL,0);
+					cuda_ordinal_flag = 0;
+				}
+				if (cuda_mem_type_flag) {
+					user_param->cuda_mem_type = strtol(optarg,NULL,0);
+					if (user_param->cuda_mem_type < CUDA_MEM_DEVICE || user_param->cuda_mem_type >= CUDA_MEM_TYPES) {
+						fprintf(stderr, " invalid CUDA memory type %d\n", user_param->cuda_mem_type);
+						return FAILURE;
+					}
+					cuda_mem_type_flag = 0;
+				}
+				if (cuda_mem_hints_flag) {
+					user_param->cuda_mem_hints = strtol(optarg,NULL,0);
+					if (user_param->cuda_mem_hints < CUDA_MEM_NO_HINTS || user_param->cuda_mem_hints >= CUDA_MEM_HINTS) {
+						fprintf(stderr, " invalid CUDA memory hints %d\n", user_param->cuda_mem_hints);
+						return FAILURE;
+					}
+					cuda_mem_hints_flag = 0;
+				}
+				#endif
 				if (pkey_flag) {
 					user_param->pkey_index = strtol(optarg,NULL,0);
 					pkey_flag = 0;
@@ -1921,8 +2212,10 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 						user_param->rate_limit_type = SW_RATE_LIMIT;
 					else if(strcmp("HW",optarg) == 0)
 						user_param->rate_limit_type = HW_RATE_LIMIT;
+					else if(strcmp("PP",optarg) == 0)
+						user_param->rate_limit_type = PP_RATE_LIMIT;
 					else {
-						fprintf(stderr, " Invalid HW limit type  flag. Please use HW, SW \n");
+						fprintf(stderr, " Invalid rate limit type flag. Please use HW, SW or PP.\n");
 						return FAILURE;
 					}
 					rate_limit_type_flag = 0;
@@ -2012,6 +2305,73 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 					flows_burst_flag = 0;
 
 				}
+				if (force_link_flag) {
+					user_param->link_type = str_link_layer(optarg);
+					if (user_param->link_type == LINK_FAILURE) {
+						fprintf(stderr, "Invalid link layer value should be IB or ETHERNET.\n");
+						return FAILURE;
+					}
+					force_link_flag = 0;
+				}
+				if (remote_mac_flag) {
+					user_param->is_new_raw_eth_param = 1;
+					user_param->is_dest_mac = 1;
+					if(parse_mac_from_str(optarg, user_param->remote_mac))
+						return FAILURE;
+					remote_mac_flag = 0;
+				}
+				if (local_mac_flag) {
+					user_param->is_new_raw_eth_param = 1;
+					user_param->is_source_mac = 1;
+					if(parse_mac_from_str(optarg, user_param->local_mac))
+						return FAILURE;
+					local_mac_flag = 0;
+				}
+				if (remote_ip_flag) {
+					user_param->is_new_raw_eth_param = 1;
+					user_param->is_client_ip = 1;
+					remote_ip = optarg;
+					remote_ip_flag = 0;
+				}
+				if (local_ip_flag) {
+					user_param->is_new_raw_eth_param = 1;
+					user_param->is_server_ip = 1;
+					local_ip = optarg;
+					local_ip_flag = 0;
+				}
+				if (remote_port_flag) {
+					user_param->is_new_raw_eth_param = 1;
+					user_param->is_client_port = 1;
+					user_param->remote_port = strtol(optarg, NULL, 0);
+					if(OFF == check_if_valid_udp_port(user_param->remote_port)) {
+						fprintf(stderr," Invalid remote UDP port\n");
+						return FAILURE;
+					}
+					remote_port_flag = 0;
+				}
+				if (local_port_flag) {
+					user_param->is_new_raw_eth_param = 1;
+					user_param->is_server_port = 1;
+					user_param->local_port = strtol(optarg, NULL, 0);
+					if(OFF == check_if_valid_udp_port(user_param->local_port)) {
+						fprintf(stderr," Invalid local UDP port\n");
+						return FAILURE;
+					}
+					local_port_flag = 0;
+				}
+				if (reply_every_flag) {
+					user_param->reply_every = strtol(optarg, NULL, 0);
+					reply_every_flag = 0;
+				}
+				if(vlan_pcp_flag) {
+					user_param->vlan_pcp = strtol(optarg, NULL, 0);
+					user_param->vlan_en = ON;
+					if (user_param->vlan_pcp > 8) {
+						fprintf(stderr, "Invalid vlan priority value. Please set a number in 0~8\n");
+						return FAILURE;
+					}
+					vlan_pcp_flag = 0;
+				}
 				break;
 
 			default:
@@ -2051,10 +2411,11 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 	if (use_res_domain_flag) {
 		user_param->use_res_domain = 1;
 	}
-
+	#ifdef HAVE_CUDA
 	if (use_cuda_flag) {
 		user_param->use_cuda = 1;
 	}
+	#endif
 	if (report_both_flag) {
 		user_param->report_both = 1;
 	}
@@ -2076,34 +2437,68 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 	}
 
 	if (raw_ipv6_flag) {
-		if (user_param->is_server_ip) {
-			if(1 != parse_ip6_from_str(server_ip,
-						  (struct in6_addr *)&(user_param->server_ip6))) {
-				fprintf(stderr," Invalid server IP address\n");
-				return FAILURE;
+		if (user_param->is_new_raw_eth_param) {
+			if (user_param->is_server_ip) {
+				if(1 != parse_ip6_from_str(local_ip,
+							  (struct in6_addr *)&(user_param->local_ip6))) {
+					fprintf(stderr," Invalid local IP address\n");
+					return FAILURE;
+				}
 			}
-		}
-		if (user_param->is_client_ip) {
-			if(1 != parse_ip6_from_str(client_ip,
-						  (struct in6_addr *)&(user_param->client_ip6))) {
-				fprintf(stderr," Invalid client IP address\n");
-				return FAILURE;
+			if (user_param->is_client_ip) {
+				if(1 != parse_ip6_from_str(remote_ip,
+							  (struct in6_addr *)&(user_param->remote_ip6))) {
+					fprintf(stderr," Invalid remote IP address\n");
+					return FAILURE;
+				}
+			}
+		} else {
+			if (user_param->is_server_ip) {
+				if(1 != parse_ip6_from_str(server_ip,
+							  (struct in6_addr *)&(user_param->server_ip6))) {
+					fprintf(stderr," Invalid server IP address\n");
+					return FAILURE;
+				}
+			}
+			if (user_param->is_client_ip) {
+				if(1 != parse_ip6_from_str(client_ip,
+							  (struct in6_addr *)&(user_param->client_ip6))) {
+					fprintf(stderr," Invalid client IP address\n");
+					return FAILURE;
+				}
 			}
 		}
 		user_param->raw_ipv6 = 1;
 	} else {
-		if (user_param->is_server_ip) {
-			if(1 != parse_ip_from_str(server_ip,
-						  &(user_param->server_ip))) {
-				fprintf(stderr," Invalid server IP address\n");
-				return FAILURE;
+		if (user_param->is_new_raw_eth_param) {
+			if (user_param->is_server_ip) {
+				if(1 != parse_ip_from_str(local_ip,
+							  &(user_param->local_ip))) {
+					fprintf(stderr," Invalid local IP address\n");
+					return FAILURE;
+				}
 			}
-		}
-		if (user_param->is_client_ip) {
-			if(1 != parse_ip_from_str(client_ip,
-						  &(user_param->client_ip))) {
-				fprintf(stderr," Invalid client IP address\n");
-				return FAILURE;
+			if (user_param->is_client_ip) {
+				if(1 != parse_ip_from_str(remote_ip,
+							  &(user_param->remote_ip))) {
+					fprintf(stderr," Invalid remote IP address\n");
+					return FAILURE;
+				}
+			}
+		} else {
+			if (user_param->is_server_ip) {
+				if(1 != parse_ip_from_str(server_ip,
+							  &(user_param->server_ip))) {
+					fprintf(stderr," Invalid server IP address\n");
+					return FAILURE;
+				}
+			}
+			if (user_param->is_client_ip) {
+				if(1 != parse_ip_from_str(client_ip,
+							  &(user_param->client_ip))) {
+					fprintf(stderr," Invalid client IP address\n");
+					return FAILURE;
+				}
 			}
 		}
 	}
@@ -2112,8 +2507,16 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 		user_param->use_odp = 1;
 	}
 
+	if(hugepages_flag) {
+		user_param->use_hugepages = 1;
+	}
+
 	if (use_promiscuous_flag) {
 		user_param->use_promiscuous = 1;
+	}
+
+	if (use_sniffer_flag) {
+		user_param->use_sniffer = 1;
 	}
 
 	if (raw_mcast_flag) {
@@ -2127,7 +2530,16 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 	if (disable_fcs_flag) {
 		user_param->disable_fcs = 1;
 	}
-
+	if (perform_warm_up_flag) {
+		user_param->perform_warm_up = 1;
+	}
+	if (use_ooo_flag)
+		user_param->use_ooo = 1;
+	if(vlan_en) {
+		user_param->vlan_en = ON;
+		user_param->print_eth_func = &print_ethernet_vlan_header;
+		vlan_en = 0;
+	}
 	if (optind == argc - 1) {
 		GET_STRING(user_param->servername,strdupa(argv[optind]));
 
@@ -2146,7 +2558,7 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 		else
 			user_param->machine = SERVER;
 	}
-
+	set_raw_eth_parameters(user_param);
 	force_dependecies(user_param);
 	return 0;
 }
@@ -2157,9 +2569,8 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 int check_link_and_mtu(struct ibv_context *context,struct perftest_parameters *user_param)
 {
 	user_param->transport_type = context->device->transport_type;
-	user_param->link_type = set_link_layer(context,user_param->ib_port);
 
-	if (user_param->link_type == LINK_FAILURE) {
+	if (set_link_layer(context, user_param) == FAILURE) {
 		fprintf(stderr, " Couldn't set the link layer\n");
 		return FAILURE;
 	}
@@ -2185,13 +2596,8 @@ int check_link_and_mtu(struct ibv_context *context,struct perftest_parameters *u
 
 	if (user_param->dualport==ON) {
 
-		user_param->link_type2 = set_link_layer(context,user_param->ib_port2);
 		if (user_param->link_type2 == IBV_LINK_LAYER_ETHERNET &&  user_param->gid_index2 == -1) {
 			user_param->gid_index2 = 1;
-		}
-		if (user_param->link_type2 == LINK_FAILURE) {
-			fprintf(stderr, " Couldn't set the link layer\n");
-			return FAILURE;
 		}
 	}
 
@@ -2239,9 +2645,8 @@ int check_link_and_mtu(struct ibv_context *context,struct perftest_parameters *u
 int check_link(struct ibv_context *context,struct perftest_parameters *user_param)
 {
 	user_param->transport_type = context->device->transport_type;
-	user_param->link_type = set_link_layer(context,user_param->ib_port);
 
-	if (user_param->link_type == LINK_FAILURE) {
+	if (set_link_layer(context, user_param) == FAILURE){
 		fprintf(stderr, " Couldn't set the link layer\n");
 		return FAILURE;
 	}
@@ -2260,13 +2665,8 @@ int check_link(struct ibv_context *context,struct perftest_parameters *user_para
 
 	/* in case of dual-port mode */
 	if (user_param->dualport==ON) {
-		user_param->link_type2 = set_link_layer(context,user_param->ib_port2);
 		if (user_param->link_type2 == IBV_LINK_LAYER_ETHERNET &&  user_param->gid_index2 == -1) {
 			user_param->gid_index2 = 1;
-		}
-		if (user_param->link_type2 == LINK_FAILURE) {
-			fprintf(stderr, " Couldn't set the link layer\n");
-			return FAILURE;
 		}
 	}
 
@@ -2333,8 +2733,7 @@ void ctx_print_test_info(struct perftest_parameters *user_param)
 	printf("Test\n");
 
 	if (user_param->use_event) {
-		printf(" Test with events.\n");
-
+		printf(" Test with events. Using %s_comp%d\n", user_param->ib_devname, user_param->eq_num);
 	}
 
 	if (user_param->use_mcg)
@@ -2429,7 +2828,10 @@ void print_report_bw (struct perftest_parameters *user_param, struct bw_report_d
 	int num_of_qps = user_param->num_of_qps;
 	long format_factor;
 	long num_of_calculated_iters = user_param->iters;
+
 	int free_my_bw_rep = 0;
+	if (user_param->test_method == RUN_INFINITELY)
+		user_param->tcompleted[opt_posted]= get_cycles();
 
 	cycles_t t,opt_delta, peak_up, peak_down,tsize;
 
@@ -2440,8 +2842,8 @@ void print_report_bw (struct perftest_parameters *user_param, struct bw_report_d
 
 	if (user_param->noPeak == OFF) {
 		/* Find the peak bandwidth unless asked not to in command line */
-		for (i = 0; i < user_param->iters * num_of_qps; ++i) {
-			for (j = i; j < user_param->iters * num_of_qps; ++j) {
+		for (i = 0; i < num_of_calculated_iters * num_of_qps; ++i) {
+			for (j = i; j < num_of_calculated_iters * num_of_qps; ++j) {
 				t = (user_param->tcompleted[j] - user_param->tposted[i]) / (j - i + 1);
 				if (t < opt_delta) {
 					opt_delta  = t;
@@ -2461,7 +2863,7 @@ void print_report_bw (struct perftest_parameters *user_param, struct bw_report_d
 	run_inf_bi_factor = (user_param->duplex && user_param->test_method == RUN_INFINITELY) ? (user_param->verb == SEND ? 1 : 2) : 1 ;
 	tsize = run_inf_bi_factor * user_param->size;
 	num_of_calculated_iters *= (user_param->test_type == DURATION) ? 1 : num_of_qps;
-	location_arr = (user_param->noPeak) ? 0 : user_param->iters*num_of_qps - 1;
+	location_arr = (user_param->noPeak) ? 0 : num_of_calculated_iters - 1;
 	/* support in GBS format */
 	format_factor = (user_param->report_fmt == MBS) ? 0x100000 : 125000000;
 
@@ -2486,7 +2888,7 @@ void print_report_bw (struct perftest_parameters *user_param, struct bw_report_d
 	}
 
 	my_bw_rep->size = (unsigned long)user_param->size;
-	my_bw_rep->iters = user_param->iters;
+	my_bw_rep->iters = num_of_calculated_iters;
 	my_bw_rep->bw_peak = (double)peak_up/peak_down;
 	my_bw_rep->bw_avg = bw_avg;
 	my_bw_rep->msgRate_avg = msgRate_avg;
@@ -2554,8 +2956,10 @@ void print_full_bw_report (struct perftest_parameters *user_param, struct bw_rep
 		printf(REPORT_FMT_PER_PORT, my_bw_rep->size, my_bw_rep->iters, bw_peak, bw_avg, msgRate_avg, bw_avg_p1, msgRate_avg_p1, bw_avg_p2, msgRate_avg_p2);
 	else
 		printf( inc_accuracy ? REPORT_FMT_EXT : REPORT_FMT, my_bw_rep->size, my_bw_rep->iters, bw_peak, bw_avg, msgRate_avg);
-	if (user_param->output == FULL_VERBOSITY)
-		printf( user_param->cpu_util_data.enable ? REPORT_EXT_CPU_UTIL : REPORT_EXT , calc_cpu_util(user_param));
+	if (user_param->output == FULL_VERBOSITY) {
+		fflush(stdout);
+		fprintf(stdout, user_param->cpu_util_data.enable ? REPORT_EXT_CPU_UTIL : REPORT_EXT , calc_cpu_util(user_param));
+	}
 }
 /******************************************************************************
  *
@@ -2584,22 +2988,23 @@ static int cycles_compare(const void *aptr, const void *bptr)
 /******************************************************************************
  *
  ******************************************************************************/
-#define cycles_to_usec(sample, cycles_to_units, factor) ((((sample) / (cycles_to_units)) / (factor)))
-
+#define LAT_MEASURE_TAIL (2)
 void print_report_lat (struct perftest_parameters *user_param)
 {
 
 	int i;
 	int rtt_factor;
-	double cycles_to_units, temp_var, pow_var;
+	double cycles_to_units, cycles_rtt_quotient, temp_var, pow_var;
 	cycles_t median ;
 	cycles_t *delta = NULL;
 	const char* units;
 	double latency, stdev, average_sum = 0 , average, stdev_sum = 0;
-	int iters_99,iters_99_9;
+	int iters_99, iters_99_9;
+	int measure_cnt;
 
+	measure_cnt = (user_param->tst == LAT) ? user_param->iters - 1 : (user_param->iters) / user_param->reply_every;
 	rtt_factor = (user_param->verb == READ || user_param->verb == ATOMIC) ? 1 : 2;
-	ALLOCATE(delta,cycles_t,user_param->iters - 1);
+	ALLOCATE(delta, cycles_t, measure_cnt);
 
 	if (user_param->r_flag->cycles) {
 		cycles_to_units = 1;
@@ -2609,40 +3014,48 @@ void print_report_lat (struct perftest_parameters *user_param)
 		units = "usec";
 	}
 
-	for (i = 0; i < user_param->iters - 1; ++i)
-		delta[i] = user_param->tposted[i + 1] - user_param->tposted[i];
-
-	if (user_param->r_flag->unsorted) {
-		printf("#, %s\n", units);
-		for (i = 0; i < user_param->iters - 1; ++i)
-			printf("%d, %g\n", i + 1, cycles_to_usec(delta[i], cycles_to_units, rtt_factor));
+	if (user_param->tst == LAT) {
+		for (i = 0; i < measure_cnt; ++i) {
+			delta[i] = user_param->tposted[i + 1] - user_param->tposted[i];
+		}
+	} else if (user_param->tst == LAT_BY_BW) {
+		for (i = 0; i < measure_cnt; ++i) {
+			delta[i] = user_param->tcompleted[i] - user_param->tposted[i];
+		}
+	}
+	else {
+		fprintf(stderr,"print report LAT is support in LAT and LAT_BY_BW tests only\n");
+		exit(1);
 	}
 
-	qsort(delta, user_param->iters - 1, sizeof *delta, cycles_compare);
+	cycles_rtt_quotient = cycles_to_units * rtt_factor;
+	if (user_param->r_flag->unsorted) {
+		printf("#, %s\n", units);
+		for (i = 0; i < measure_cnt; ++i)
+			printf("%d, %g\n", i + 1, delta[i] / cycles_rtt_quotient);
+	}
 
-	median = get_median(user_param->iters - 1, delta);
-
-	iters_99 = ceil((user_param->iters - 1 )*0.99);
-	iters_99_9 = ceil((user_param->iters - 1)*0.999);
+	qsort(delta, measure_cnt, sizeof *delta, cycles_compare);
+	measure_cnt = measure_cnt - LAT_MEASURE_TAIL;
+	median = get_median(measure_cnt, delta);
 
 	/* calcualte average sum on sorted array*/
-	for (i = 0; i < user_param->iters - 1; ++i)
-		average_sum += cycles_to_usec(delta[i], cycles_to_units, rtt_factor);
+	for (i = 0; i < measure_cnt; ++i)
+		average_sum += (delta[i] / cycles_rtt_quotient);
 
-	average = average_sum / (user_param->iters - 1);
+	average = average_sum / measure_cnt;
 
 	/* Calculate stdev by variance*/
-	for (i = 0; i < user_param->iters - 1; ++i) {
-		temp_var = average - cycles_to_usec(delta[i], cycles_to_units, rtt_factor);
+	for (i = 0; i < measure_cnt; ++i) {
+		temp_var = average - (delta[i] / cycles_rtt_quotient);
 		pow_var = pow(temp_var, 2 );
 		stdev_sum += pow_var;
 	}
-	stdev = sqrt(stdev_sum / (user_param->iters));
 
 	if (user_param->r_flag->histogram) {
 		printf("#, %s\n", units);
-		for (i = 0; i < user_param->iters - 1; ++i)
-			printf("%d, %g\n", i + 1, cycles_to_usec(delta[i], cycles_to_units, rtt_factor));
+		for (i = 0; i < measure_cnt; ++i)
+			printf("%d, %g\n", i + 1, delta[i] / cycles_rtt_quotient);
 	}
 
 	if (user_param->r_flag->unsorted || user_param->r_flag->histogram) {
@@ -2653,7 +3066,10 @@ void print_report_lat (struct perftest_parameters *user_param)
 		}
 	}
 
-	latency = cycles_to_usec(median, cycles_to_units, rtt_factor);
+	latency = median / cycles_rtt_quotient;
+	stdev = sqrt(stdev_sum / measure_cnt);
+	iters_99 = ceil((measure_cnt) * 0.99);
+	iters_99_9 = ceil((measure_cnt) * 0.999);
 
 	if (user_param->output == OUTPUT_LAT)
 		printf("%lf\n",average);
@@ -2661,13 +3077,13 @@ void print_report_lat (struct perftest_parameters *user_param)
 		printf(REPORT_FMT_LAT,
 				(unsigned long)user_param->size,
 				user_param->iters,
-				cycles_to_usec(delta[0], cycles_to_units, rtt_factor),
-				cycles_to_usec(delta[user_param->iters - 2], cycles_to_units, rtt_factor),
+				delta[0] / cycles_rtt_quotient,
+				delta[measure_cnt] / cycles_rtt_quotient,
 				latency,
 				average,
 				stdev,
-				cycles_to_usec(delta[iters_99], cycles_to_units, rtt_factor),
-				cycles_to_usec(delta[iters_99_9], cycles_to_units, rtt_factor));
+				delta[iters_99] / cycles_rtt_quotient,
+				delta[iters_99_9] / cycles_rtt_quotient);
 		printf( user_param->cpu_util_data.enable ? REPORT_EXT_CPU_UTIL : REPORT_EXT , calc_cpu_util(user_param));
 	}
 
@@ -2682,13 +3098,14 @@ void print_report_lat_duration (struct perftest_parameters *user_param)
 	int rtt_factor;
 	double cycles_to_units;
 	cycles_t test_sample_time;
-	double latency;
+	double latency, tps;
 
 	rtt_factor = (user_param->verb == READ || user_param->verb == ATOMIC) ? 1 : 2;
 	cycles_to_units = get_cpu_mhz(user_param->cpu_freq_f);
 
 	test_sample_time = (user_param->tcompleted[0] - user_param->tposted[0]);
 	latency = (((test_sample_time / cycles_to_units) / rtt_factor) / user_param->iters);
+	tps = user_param->iters / (test_sample_time / (cycles_to_units * 1000000));
 
 	if (user_param->output == OUTPUT_LAT) {
 		printf("%lf\n",latency);
@@ -2697,11 +3114,100 @@ void print_report_lat_duration (struct perftest_parameters *user_param)
 		printf(REPORT_FMT_LAT_DUR,
 				user_param->size,
 				user_param->iters,
-				latency);
+				latency, tps);
 		printf( user_param->cpu_util_data.enable ? REPORT_EXT_CPU_UTIL : REPORT_EXT , calc_cpu_util(user_param));
 	}
 }
 
+void print_report_fs_rate (struct perftest_parameters *user_param)
+{
+
+	int i;
+	double cycles_to_units, units_to_sec;
+	cycles_t median, average_sum = 0;
+	cycles_t *delta = NULL;
+	const char* units;
+	double latency = 0, average = 0, fps = 0;
+	int measure_cnt = 1;
+	cycles_t test_sample_time;
+
+	if (user_param->r_flag->cycles) {
+		cycles_to_units = 1;
+		units = CYCLES;
+		units_to_sec =  get_cpu_mhz(user_param->cpu_freq_f);
+	} else {
+		cycles_to_units = get_cpu_mhz(user_param->cpu_freq_f);
+		units = USEC;
+		units_to_sec = 1000000;
+	}
+
+	if (user_param->test_type == ITERATIONS) {
+		measure_cnt = user_param->flows;
+		ALLOCATE(delta, cycles_t, measure_cnt);
+
+		for (i = 0; i < measure_cnt; ++i)
+			delta[i] = user_param->tcompleted[i] - user_param->tposted[i];
+
+		if (user_param->r_flag->unsorted) {
+			printf("#, %s\n", units);
+			for (i = 0; i < measure_cnt; ++i)
+				printf("%d, %g\n", i + 1, delta[i] / cycles_to_units);
+		}
+
+		qsort(delta, measure_cnt, sizeof *delta, cycles_compare);
+		median = get_median(measure_cnt, delta);
+
+		/* calcualte average sum on sorted array*/
+		for (i = 0; i < measure_cnt; ++i)
+			average_sum += delta[i];
+
+
+		average = average_sum / measure_cnt / cycles_to_units;
+
+
+		if (user_param->r_flag->histogram) {
+			printf("#, %s\n", units);
+			for (i = 0; i < measure_cnt; ++i)
+				printf("%d, %g\n", i + 1, delta[i] / cycles_to_units);
+		}
+		latency = median / cycles_to_units;
+	}
+	else {
+		test_sample_time = (user_param->tcompleted[0] - user_param->tposted[0]);
+		latency = test_sample_time  / user_param->iters / cycles_to_units;
+		average = latency;
+		fps = user_param->iters / (test_sample_time / (cycles_to_units * units_to_sec));
+	}
+
+	if (user_param->output == FULL_VERBOSITY) {
+		printf(RESULT_LINE);
+		printf("%s", (user_param->test_type == ITERATIONS) ? RESULT_FMT_FS_RATE : RESULT_FMT_FS_RATE_DUR);
+		printf((user_param->cpu_util_data.enable ? RESULT_EXT_CPU_UTIL : RESULT_EXT));
+	}
+
+	if (user_param->output == OUTPUT_LAT)
+		printf("%lf\n", average);
+	else {
+		if (user_param->test_type == ITERATIONS) {
+			fps = measure_cnt / (average_sum / (cycles_to_units * units_to_sec));
+			printf(REPORT_FMT_FS_RATE,
+				user_param->iters,
+				delta[0] / cycles_to_units,
+				delta[measure_cnt - 1] / cycles_to_units,
+				latency,
+				average,
+				fps);
+		} else {
+			printf(REPORT_FMT_FS_RATE_DUR,
+				user_param->iters,
+				latency,
+				fps);
+		}
+		printf(user_param->cpu_util_data.enable ? REPORT_EXT_CPU_UTIL : REPORT_EXT, calc_cpu_util(user_param));
+	}
+
+	free(delta);
+}
 /******************************************************************************
  * End
  ******************************************************************************/

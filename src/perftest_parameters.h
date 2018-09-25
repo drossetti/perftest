@@ -70,6 +70,24 @@
 
 #ifdef HAVE_CUDA
 #include CUDA_PATH
+
+enum cuda_mem_type {
+  CUDA_MEM_DEVICE = 0,
+  CUDA_MEM_MANAGED,
+  CUDA_MEM_HOSTALLOC,
+  CUDA_MEM_HOSTREGISTER,
+  CUDA_MEM_MALLOC,
+  CUDA_MEM_TYPES
+};
+
+enum cuda_mem_hints {
+  CUDA_MEM_NO_HINTS = 0,
+  CUDA_MEM_POPULATE_ON_CPU,
+  CUDA_MEM_POPULATE_ON_GPU,
+  CUDA_MEM_READ_MOSTLY,
+  CUDA_MEM_HINTS
+};
+
 #endif
 
 /* Connection types available. */
@@ -89,7 +107,8 @@
 #define HELP_EXIT	 (11)
 #define MTU_FIX	     (7)
 #define MAX_SIZE     (8388608)
-#define LINK_FAILURE (4)
+#define LINK_FAILURE (-1)
+#define LINK_UNSPEC (-2)
 #define MAX_OUT_READ_HERMON (16)
 #define MAX_OUT_READ        (4)
 #define UD_ADDITION         (40)
@@ -135,7 +154,7 @@
 
 /* Max and Min allowed values for perftest parameters. */
 #define MIN_TOS		(0)
-#define MAX_TOS		(256)
+#define MAX_TOS		(255)
 #define MIN_IB_PORT   (1)
 #define MAX_IB_PORT   (3)
 #define MIN_ITER      (5)
@@ -157,17 +176,22 @@
 #define MAX_CQ_MOD    (1024)
 #define MAX_INLINE    (912)
 #define MAX_INLINE_UD (884)
+#define MIN_EQ_NUM    (0)
+#define MAX_EQ_NUM    (2048)
 
 /* Raw etherent defines */
 #define RAWETH_MIN_MSG_SIZE	(64)
 #define MIN_MTU_RAW_ETERNET	(64)
 #define MAX_MTU_RAW_ETERNET	(9600)
-
+#define MIN_FS_PORT		(5000)
+#define MAX_FS_PORT		(65536)
+#define VLAN_PCP_VARIOUS        (8)
 
 #define RESULT_LINE "---------------------------------------------------------------------------------------\n"
 
 #define RESULT_LINE_PER_PORT "-------------------------------------------------------------------------------------------------------------------------------------------------------------------\n"
-
+#define CYCLES	"cycles"
+#define USEC	"usec"
 /* The format of the results */
 #define RESULT_FMT		" #bytes     #iterations    BW peak[MB/sec]    BW average[MB/sec]   MsgRate[Mpps]"
 
@@ -183,11 +207,15 @@
 
 #define RESULT_FMT_LAT " #bytes #iterations    t_min[usec]    t_max[usec]  t_typical[usec]    t_avg[usec]    t_stdev[usec]   99""%"" percentile[usec]   99.9""%"" percentile[usec] "
 
-#define RESULT_FMT_LAT_DUR " #bytes        #iterations       t_avg[usec]  	"
+#define RESULT_FMT_LAT_DUR " #bytes        #iterations       t_avg[usec]    tps average"
 
 #define RESULT_EXT "\n"
 
 #define RESULT_EXT_CPU_UTIL "    CPU_Util[%%]\n"
+
+#define RESULT_FMT_FS_RATE " #flows	fs_min_time[usec]	fs_max_time[usec]	fs_typical_time[usec]	fs_avg_time[usec]	fps[flow per sec]"
+
+#define RESULT_FMT_FS_RATE_DUR " #flows		fs_avg_time[usec]    	fps[flow per sec]"
 
 /* Result print format */
 #define REPORT_FMT     " %-7lu    %-10lu       %-7.2lf            %-7.2lf		   %-7.6lf"
@@ -203,9 +231,12 @@
 #define REPORT_FMT_QOS " %-7lu    %d           %lu           %-7.2lf            %-7.2lf                  %-7.6lf\n"
 
 /* Result print format for latency tests. */
-#define REPORT_FMT_LAT " %-7lu %d          %-7.2f        %-7.2f      %-7.2f  	       %-7.2f     	%-7.2f        %-7.2f              %-7.2f"
+#define REPORT_FMT_LAT " %-7lu %d          %-7.2f        %-7.2f      %-7.2f  	       %-7.2f     	%-7.2f		%-7.2f 		%-7.2f"
+#define REPORT_FMT_LAT_DUR " %-7lu       %d            %-7.2f        %-7.2f"
 
-#define REPORT_FMT_LAT_DUR " %-7lu       %d            %-7.2f"
+#define REPORT_FMT_FS_RATE " %d          %-7.2f        		%-7.2f      	%-7.2f  	       		%-7.2f     	%-7.2f"
+
+#define REPORT_FMT_FS_RATE_DUR " %d               %-7.2f		%-7.2f"
 
 #define CHECK_VALUE(arg,type,minv,maxv,name) 						    					\
 { arg = (type)strtol(optarg, NULL, 0); if ((arg < minv) || (arg > maxv))                \
@@ -230,7 +261,7 @@
 typedef enum { SEND , WRITE, READ, ATOMIC } VerbType;
 
 /* The type of the test */
-typedef enum { LAT , BW } TestType;
+typedef enum { LAT , BW , LAT_BY_BW, FS_RATE } TestType;
 
 /* The type of the machine ( server or client actually). */
 typedef enum { SERVER , CLIENT , UNCHOSEN} MachineType;
@@ -269,14 +300,17 @@ enum ctx_device {
 	CONNECTX4		= 10,
 	CONNECTX4LX		= 11,
 	QLOGIC_E4		= 12,
-	QLOGIC_AH		= 13
+	QLOGIC_AH		= 13,
+	CHELSIO_T6		= 14,
+	CONNECTX5		= 15,
+	CONNECTX5EX		= 16
 };
 
 /* Units for rate limiter */
 enum rate_limiter_units {MEGA_BYTE_PS, GIGA_BIT_PS, PACKET_PS};
 
 /*Types rate limit*/
-enum rate_limiter_types {HW_RATE_LIMIT, SW_RATE_LIMIT, DISABLE_RATE_LIMIT};
+enum rate_limiter_types {HW_RATE_LIMIT, SW_RATE_LIMIT, PP_RATE_LIMIT, DISABLE_RATE_LIMIT};
 
 /* Verbosity Levels for test report */
 enum verbosity_level {FULL_VERBOSITY=-1, OUTPUT_BW=0, OUTPUT_MR, OUTPUT_LAT };
@@ -300,6 +334,29 @@ struct check_alive_data {
 	int to_exit;
 	int is_events;
 };
+
+/* gen_eth_header .
+ * Description :create raw Ethernet header on buffer
+ *
+ * Parameters :
+ *	 	eth_header - Pointer to output
+ *	 	src_mac - source MAC address of the packet
+ *	 	dst_mac - destination MAC address of the packet
+ *	 	eth_type - IP/or size of ptk
+ *
+ *
+struct ETH_header {
+	uint8_t dst_mac[6];
+	uint8_t src_mac[6];
+	uint16_t eth_type;
+}__attribute__((packed));
+
+struct ETH_vlan_header {
+        uint8_t dst_mac[6];
+        uint8_t src_mac[6];
+        uint32_t vlan_header;
+        uint16_t eth_type;
+}__attribute__((packed));*/
 
 struct perftest_parameters {
 
@@ -327,21 +384,33 @@ struct perftest_parameters {
 	int				is_dest_mac;
 	uint8_t				server_ip6[16];
 	uint8_t				client_ip6[16];
+	uint8_t				local_ip6[16];
+	uint8_t				remote_ip6[16];
+	uint8_t				local_mac[6];
+	uint8_t				remote_mac[6];
 	uint32_t			client_ip;
 	uint32_t			server_ip;
 	int				is_server_ip;
 	int				is_client_ip;
+	uint32_t			local_ip;
+	uint32_t			remote_ip;
 	int				server_port;
 	int				client_port;
 	int				tcp;
 	int				is_server_port;
 	int				is_client_port;
+	int				local_port;
+	int				remote_port;
+	int 				is_old_raw_eth_param;
+	int 				is_new_raw_eth_param;
 	uint16_t			ethertype;
 	int				is_ethertype;
 	int				cpu_freq_f;
 	int				connection_type;
 	int				num_of_qps;
 	int				use_event;
+	int				eq_num;
+	int				use_eq_num;
 	int 				inline_size;
 	int				inline_recv_size;
 	int				out_reads;
@@ -367,8 +436,8 @@ struct perftest_parameters {
 	float				limit_msgrate;
 	uint32_t			rem_ud_qpn;
 	uint32_t			rem_ud_qkey;
-	uint8_t				link_type;
-	uint8_t				link_type2;
+	int8_t				link_type;
+	int8_t				link_type2;
 	MachineType			machine;
 	PrintDataSide			side;
 	VerbType			verb;
@@ -389,7 +458,12 @@ struct perftest_parameters {
 	int				buff_size;
 	int             		pkey_index;
 	int				raw_qos;
+	#ifdef HAVE_CUDA
 	int				use_cuda;
+	int				cuda_ordinal;
+	int				cuda_mem_type;
+	int				cuda_mem_hints;
+	#endif
 	char				*mmap_file;
 	unsigned long			mmap_offset;
 	/* New test params format pilot. will be used in all flags soon,. */
@@ -422,7 +496,9 @@ struct perftest_parameters {
 	int 				raw_ipv6;
 	int 				report_per_port;
 	int 				use_odp;
+	int				use_hugepages;
 	int				use_promiscuous;
+	int				use_sniffer;
 	int				check_alive_exited;
 	int				raw_mcast;
 	int				masked_atomics;
@@ -439,6 +515,13 @@ struct perftest_parameters {
 	int				disable_fcs;
 	int				flows;
 	int				flows_burst;
+	uint32_t			reply_every;
+	int				perform_warm_up;
+	int				use_ooo;
+	int                             vlan_en;
+	uint32_t			vlan_pcp;
+	void 				(*print_eth_func)(void*);
+
 };
 
 struct report_options {
@@ -502,7 +585,20 @@ static const struct rate_gbps_string RATE_VALUES[RATE_VALUES_COUNT] = {
  *
  * Return Value :"IB", "Etherent" or "Unknown".
  */
-const char *link_layer_str(uint8_t link_layer);
+const char *link_layer_str(int8_t link_layer);
+
+/* str_link_layer
+ *
+ * Description : Try to parse a string into a verbs link layer type.
+ *
+ * link_layer   : (According to verbs.h) :
+ *      "IB"       -> IBV_LINK_LAYER_INFINIBAND.
+ *      "Ethernet" -> IBV_LINK_LAYER_ETHERNET.
+ *      otherwise  -> LINK_FAILURE.
+ *
+ * Return Value : IBV_LINK_LAYER or LINK_FAILURE
+ */
+const int str_link_layer(const char *str);
 
 /* parser
  *
@@ -605,6 +701,17 @@ void print_report_lat (struct perftest_parameters *user_param);
  *
  */
 void print_report_lat_duration (struct perftest_parameters *user_param);
+
+/* print_report_fs_rate
+ *
+ * Description : Prints the Flow steering rate and avarage latency to create flow
+ *
+ * Parameters :
+ *
+ *   user_param  - the parameters parameters.
+ *
+ */
+void print_report_fs_rate (struct perftest_parameters *user_param);
 
 /* set_mtu
  *

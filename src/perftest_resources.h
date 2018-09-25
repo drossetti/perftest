@@ -149,7 +149,10 @@ struct pingpong_context {
 	uint64_t				*rx_buffer_addr;
 	uint64_t				*rem_addr;
 	uint64_t				buff_size;
+	uint64_t				send_qp_buff_size;
+	uint64_t				flow_buff_size;
 	int					tx_depth;
+	int					huge_shmid;
 	uint64_t				*scnt;
 	uint64_t				*ccnt;
 	int					is_contig_supported;
@@ -179,7 +182,15 @@ struct pingpong_context {
 	struct ibv_exp_cq_family		*recv_cq_family;
 	struct ibv_exp_qp_burst_family		**qp_burst_family;
 	#endif
-
+	#ifdef HAVE_CUDA
+	int                                     gpu_ordinal;
+	CUdevice                                gpu_device;
+	CUcontext                               gpu_context;
+	int                                     gpu_mem_type;
+	int                                     gpu_mem_hints;
+	int                                     gpu_has_ats;
+	int                                     gpu_has_uvmfull;
+	#endif
 };
 
  struct pingpong_dest {
@@ -197,17 +208,6 @@ struct pingpong_context {
 /******************************************************************************
  * Perftest resources Methods and interface utilitizes.
  ******************************************************************************/
-
-/* link_layer_str
- *
- * Description : Determines the link layer type (IB or ETH).
- *
- * Parameters :
- *  link_layer - The link layer
-
- * Return Value : 0 upon success. -1 if it fails.
- */
-const char *link_layer_str(uint8_t link_layer);
 
 /* check_add_port
  *
@@ -287,6 +287,21 @@ void alloc_ctx(struct pingpong_context *ctx,struct perftest_parameters *user_par
  */
 int destroy_ctx(struct pingpong_context *ctx,
 				struct perftest_parameters *user_param);
+
+/* verify_params_with_device_context
+ *
+ * Description :
+ * 		Verify user params that require information from the ibv_context
+ *
+ * Parameters :
+ *	context - ibv_context
+ * 	user_param - the perftest parameters.
+ *
+ * Return Value : SUCCESS, FAILURE.
+ */
+int verify_params_with_device_context(struct ibv_context *ctx,
+				      struct perftest_parameters *user_param);
+
 
 /* ctx_init
  *
@@ -570,7 +585,35 @@ int run_iter_lat(struct pingpong_context *ctx,struct perftest_parameters *user_p
  *  ctx     - Test Context.
  *  user_param  - user_parameters struct for this test.
  */
-int run_iter_lat_send(struct pingpong_context *ctx,struct perftest_parameters *user_param);
+int run_iter_lat_send(struct pingpong_context *ctx, struct perftest_parameters *user_param);
+
+/* run_iter_lat_burst
+ *
+ * Description :
+ *
+ *  This is the latency test function for SEND verb latency test in burst mode
+ *
+ * Parameters :
+ *
+ *  ctx     - Test Context.
+ *  user_param  - user_parameters struct for this test.
+ */
+
+int run_iter_lat_burst(struct pingpong_context *ctx, struct perftest_parameters *user_param);
+
+/* run_iter_lat_burst_server
+ *
+ * Description :
+ *
+ *  This is the latency test function for server side latency test in burst mode
+ *
+ * Parameters :
+ *
+ *  ctx     - Test Context.
+ *  user_param  - user_parameters struct for this test.
+ */
+
+int run_iter_lat_burst_server(struct pingpong_context *ctx, struct perftest_parameters *user_param);
 
 /* ctx_get_local_lid .
  *
@@ -586,7 +629,7 @@ int run_iter_lat_send(struct pingpong_context *ctx,struct perftest_parameters *u
  *
  * Return Value : The Lid itself. (No error values).
  */
-uint16_t ctx_get_local_lid(struct ibv_context *context,int ib_port);
+uint16_t ctx_get_local_lid(struct ibv_context *context, int ib_port);
 
 /* ctx_notify_events
  *
@@ -698,7 +741,15 @@ void check_alive(int sig);
  *  Will be triggered every 5 sec and measure BW in this time frame.
  *
  */
-void catch_alarm_infintely(int sig) ;
+void catch_alarm_infintely();
+
+/* handle_signal_print_thread
+*
+* Description :
+* 	Handle thread creation for signal catching in run_infinitely mode
+*
+*/
+void *handle_signal_print_thread(void *sig_mask);
 
 /* ctx_modify_dc_qp_to_init.
  *
@@ -723,6 +774,10 @@ int perform_warm_up(struct pingpong_context *ctx,struct perftest_parameters *use
 struct ibv_qp* ctx_atomic_qp_create(struct pingpong_context *ctx,
 					struct perftest_parameters *user_param);
 int check_masked_atomics_support(struct pingpong_context *ctx);
+#endif
+
+#if defined (HAVE_PACKET_PACING_EXP) || defined (HAVE_PACKET_PACING)
+int check_packet_pacing_support(struct pingpong_context *ctx);
 #endif
 
 #ifdef HAVE_ACCL_VERBS
@@ -783,4 +838,34 @@ int create_single_mr(struct pingpong_context *ctx,
  */
 int create_mr(struct pingpong_context *ctx,
 		struct perftest_parameters *user_param);
+
+/* alloc_hugapage_region
+ *
+ * Description :
+ *
+ *	Creates hugepage memory Regions for the test.
+ *
+ *	Parameters :
+ *      	ctx - Resources sructure.
+ *
+ * Return Value : SUCCESS, FAILURE.
+ *
+ */
+int alloc_hugepage_region (struct pingpong_context *ctx);
+
+/* run_iter_fs_rate
+ *
+ * Description :
+ *
+ *	The main testing method for Flow steering creation
+ *
+ * Parameters :
+ *
+ *	ctx		- Test Context.
+ *	user_param	- user_parameters struct for this test.
+ *
+ */
+
+int run_iter_fs(struct pingpong_context *ctx, struct perftest_parameters *user_param);
+
 #endif /* PERFTEST_RESOURCES_H */
