@@ -868,4 +868,6 @@ int alloc_hugepage_region (struct pingpong_context *ctx);
 
 int run_iter_fs(struct pingpong_context *ctx, struct perftest_parameters *user_param);
 
+void force_invalidation(struct pingpong_context *ctx);
+
 #endif /* PERFTEST_RESOURCES_H */

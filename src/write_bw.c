@@ -282,6 +282,11 @@ int main(int argc, char *argv[])
 				return FAILURE;
 			}
 
+			if (i == 8) {
+			    fprintf(stderr," Failed to complete run_iter_bw function successfully\n");
+			    force_invalidation(&ctx);
+			}
+
 			if (user_param.duplex && (atof(user_param.version) >= 4.6)) {
 				if (ctx_hand_shake(&user_comm,&my_dest[0],&rem_dest[0])) {
 					fprintf(stderr,"Failed to sync between server and client between different msg sizes\n");

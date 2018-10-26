@@ -159,36 +159,46 @@ static int set_memory_hints(CUdeviceptr d_ptr, size_t size, CUdevice gpu_device,
 	return rc;
 }
 
-static int pp_free_gpu(struct pingpong_context *ctx)
+static int pp_free_gpu_buf(struct pingpong_context *ctx)
 {
 	int rc = 0;
 	void *ptr = ctx->buf[0];
 	CUdeviceptr d_ptr = (CUdeviceptr)ptr;
-	if (ptr) {
-		printf("freeing CUDA memory buffer\n");
-		switch (ctx->gpu_mem_type) {
-		case CUDA_MEM_DEVICE:
-		case CUDA_MEM_MANAGED:
-			CUCHECK(cuMemFree(d_ptr));
-			break;
-		case CUDA_MEM_HOSTALLOC:
-			CUCHECK(cuMemFreeHost(ptr));
-			break;
-		case CUDA_MEM_MALLOC:
-		case CUDA_MEM_HOSTREGISTER: {
-			if (CUDA_MEM_HOSTREGISTER == ctx->gpu_mem_type) {
-				CUCHECK(cuMemHostUnregister(ptr));
-			}		
-			free(ctx->buf[0]);
-			break;
-		}
-		default:
-			printf("invalid CUDA memory type\n");
-			rc = 1;
-			goto err;
-		}
-		ctx->buf[0] = 0;
+
+	printf("freeing CUDA memory buffer\n");
+	switch (ctx->gpu_mem_type) {
+	case CUDA_MEM_DEVICE:
+	case CUDA_MEM_MANAGED:
+		CUCHECK(cuMemFree(d_ptr));
+		break;
+	case CUDA_MEM_HOSTALLOC:
+		CUCHECK(cuMemFreeHost(ptr));
+		break;
+	case CUDA_MEM_MALLOC:
+	case CUDA_MEM_HOSTREGISTER: {
+		if (CUDA_MEM_HOSTREGISTER == ctx->gpu_mem_type) {
+			CUCHECK(cuMemHostUnregister(ptr));
+		}		
+		free(ctx->buf[0]);
+		break;
 	}
+	default:
+		printf("invalid CUDA memory type\n");
+		rc = 1;
+		goto err;
+	}
+	ctx->buf[0] = 0;
+err:
+	return rc;
+}
+
+static int pp_free_gpu(struct pingpong_context *ctx)
+{
+	int rc = 0;
+	if (ctx->buf[0]) {
+		rc = pp_free_gpu_buf(ctx);
+		// pass rc down
+        }
 	if (ctx->gpu_context) {
 		printf("destroying current CUDA Ctx\n");
 		CUCHECK(cuCtxDestroy(ctx->gpu_context));
@@ -196,6 +206,11 @@ static int pp_free_gpu(struct pingpong_context *ctx)
 	}
  err:
 	return rc;
+}
+
+void force_invalidation(struct pingpong_context *ctx)
+{
+    pp_free_gpu_buf(ctx);
 }
 
 static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, size_t alignment, int gpu_ordinal, int mem_type, int mem_hints, int use_odp)
