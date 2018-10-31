@@ -281,12 +281,12 @@ int main(int argc, char *argv[])
 				fprintf(stderr," Failed to complete run_iter_bw function successfully\n");
 				return FAILURE;
 			}
-
-			if (i == 8) {
-			    fprintf(stderr," Failed to complete run_iter_bw function successfully\n");
+			#ifdef HAVE_CUDA
+			if (i >= user_param.cuda_force_invalidation) {
+			    fprintf(stderr," Injecting an memory registration invalidation\n");
 			    force_invalidation(&ctx);
 			}
-
+			#endif
 			if (user_param.duplex && (atof(user_param.version) >= 4.6)) {
 				if (ctx_hand_shake(&user_comm,&my_dest[0],&rem_dest[0])) {
 					fprintf(stderr,"Failed to sync between server and client between different msg sizes\n");

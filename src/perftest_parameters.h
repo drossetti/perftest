@@ -463,6 +463,7 @@ struct perftest_parameters {
 	int				cuda_ordinal;
 	int				cuda_mem_type;
 	int				cuda_mem_hints;
+	int				cuda_force_invalidation;
 	#endif
 	char				*mmap_file;
 	unsigned long			mmap_offset;
