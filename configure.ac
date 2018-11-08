@@ -236,6 +236,7 @@ fi
 if [test "$CUDA_H_PATH" ]; then
 	AC_DEFINE([HAVE_CUDA], [1], [Enable CUDA feature])
 	AC_DEFINE_UNQUOTED([CUDA_PATH], "$CUDA_H_PATH" , [Path to CUDA toolkit include directory])
+        AC_CHECK_DECLS([CU_DEVICE_ATTRIBUTE_DIRECT_MANAGED_MEM_ACCESS_FROM_HOST], [], [], [[#include <cuda.h>]])
 	LIBS=$LIBS" -lcuda"
 fi
 
