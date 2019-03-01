@@ -464,6 +464,7 @@ struct perftest_parameters {
 	int				cuda_mem_type;
 	int				cuda_mem_hints;
 	int				cuda_force_invalidation;
+	int				cuda_ext_ordinal; // mem type = DEVICE always, no hints
 	#endif
 	char				*mmap_file;
 	unsigned long			mmap_offset;

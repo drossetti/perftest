@@ -465,6 +465,11 @@ int main(int argc, char *argv[])
 			}
 		}
 
+                if (user_param.duplex && ctx.gpu_ext_buf) {
+                        fprintf(stderr,"Duplex test with extra GPU is not supported\n");
+                        return FAILURE;
+                }
+
 		if (ctx_hand_shake(&user_comm,&my_dest[0],&rem_dest[0])) {
 			fprintf(stderr,"Failed to exchange data between server and clients\n");
 			return FAILURE;

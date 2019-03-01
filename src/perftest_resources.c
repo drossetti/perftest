@@ -159,14 +159,123 @@ static int set_memory_hints(CUdeviceptr d_ptr, size_t size, CUdevice gpu_device,
 	return rc;
 }
 
-static int pp_free_gpu_buf(struct pingpong_context *ctx)
+static int pp_alloc_gpu_buf(struct pingpong_context *ctx, void **pbuf, size_t size, size_t alignment, int gpu_mem_type, int gpu_has_ats)
+{
+        CUresult error;
+        int rc = 0;
+	void *buf = 0;
+	switch (gpu_mem_type) {
+	// TODO: add Array memory type
+	case CUDA_MEM_DEVICE: {
+		// TODO: check alignment
+		// TODO: clear memory
+		CUdeviceptr d_ptr;
+		printf("cuMemAlloc() of a %zd bytes GPU buffer\n", size);
+		error = cuMemAlloc(&d_ptr, size);
+		if (error != CUDA_SUCCESS) {
+			printf("CUDA allocation failed with error=%d\n", error);
+			rc = 1;
+			goto err;
+		}
+		error = cuMemsetD8(d_ptr, (unsigned char)0xa5, size);
+		if (error != CUDA_SUCCESS) {
+                        cuMemFree(d_ptr);
+			printf("CUDA memset failed with error=%d\n", error);
+			rc = 1;
+			goto err;
+		}
+		buf = (void*)d_ptr;
+		break;
+	}
+	case CUDA_MEM_MANAGED: {
+		// TODO: check alignment
+		// TODO: clear memory
+		CUdeviceptr d_ptr;
+		if (!gpu_has_ats) {
+			printf("RDMA on CUDA managed memory requires an appropriate host platform\n");
+			rc = 1;
+			goto err;
+		}
+		printf("cuMemAllocManaged() of %zd bytes\n", size);
+		error = cuMemAllocManaged(&d_ptr, size, CU_MEM_ATTACH_GLOBAL);
+		if (error != CUDA_SUCCESS) {
+			printf("CUDA allocation failed with error=%d\n", error);
+			rc = 1;
+			goto err;
+		}
+		error = cuMemsetD8(d_ptr, (unsigned char)0xa5, size);
+		if (error != CUDA_SUCCESS) {
+                        cuMemFree(d_ptr);
+			printf("CUDA memset failed with error=%d\n", error);
+			rc = 1;
+			goto err;
+		}
+		buf = (void*)d_ptr;
+		break;
+	}
+	case CUDA_MEM_HOSTALLOC: {
+		void *ptr;
+		// NOTE: memory which does not migrate, even on platforms where it could, e.g. POWER9
+		// TODO: check alignment
+		printf("cuMemHostAlloc() of %zd bytes\n", size);
+		// NOTE: consider using CU_MEMHOSTALLOC_PORTABLE|CU_MEMHOSTALLOC_DEVICEMAP|CU_MEMHOSTALLOC_WRITECOMBINED
+		error = cuMemHostAlloc(&ptr, size, 0);
+		if (error != CUDA_SUCCESS) {
+			printf("CUDA allocation failed with error=%d\n", error);
+			rc = 1;
+			goto err;
+		}
+		error = cuMemsetD8((CUdeviceptr)ptr, (unsigned char)0xa5, size);
+		if (error != CUDA_SUCCESS) {
+                        cuMemFreeHost(ptr);
+			printf("CUDA memset failed with error=%d\n", error);
+			rc = 1;
+			goto err;
+		}
+		buf = ptr;
+		break;
+	}
+	// TODO: add static memory type
+	case CUDA_MEM_MALLOC:
+		// NOTE: the CUDA_MEM_MALLOC is already covered by the standard non-CUDA case,
+		// but actually this one allows to set CUDA attributes.
+	case CUDA_MEM_HOSTREGISTER: {
+		void *ptr;
+		printf("memalign() of %zd bytes\n", size);
+		#if defined(__FreeBSD__)
+		posix_memalign(&ptr, alignment, size);
+		#else
+		ptr = memalign(alignment, size);
+		#endif
+		if (!ptr) {
+			printf("error: malloc allocation failure errno=%d\n", errno);
+			rc = 1;
+			goto err;
+		}
+		memset(ptr, (unsigned char)0xa5, size);
+		if (CUDA_MEM_HOSTREGISTER == gpu_mem_type) {
+			// TODO: check CU_DEVICE_ATTRIBUTE_HOST_REGISTER_SUPPORTED
+			// NOTE: consider using CU_MEMHOSTREGISTER_PORTABLE|CU_MEMHOSTREGISTER_DEVICEMAP
+			CUCHECK(cuMemHostRegister(ptr, size, 0));
+		}
+		buf = ptr;
+		break;
+	}
+	default:
+		rc = 1;
+		goto err;
+	}
+err:
+        return rc;
+}
+
+static int pp_free_gpu_buf(struct pingpong_context *ctx, void *ptr, int gpu_mem_type)
 {
 	int rc = 0;
-	void *ptr = ctx->buf[0];
 	CUdeviceptr d_ptr = (CUdeviceptr)ptr;
 
 	printf("freeing CUDA memory buffer\n");
-	switch (ctx->gpu_mem_type) {
+	switch (gpu_mem_type) {
 	case CUDA_MEM_DEVICE:
 	case CUDA_MEM_MANAGED:
 		CUCHECK(cuMemFree(d_ptr));
@@ -176,10 +285,10 @@ static int pp_free_gpu_buf(struct pingpong_context *ctx)
 		break;
 	case CUDA_MEM_MALLOC:
 	case CUDA_MEM_HOSTREGISTER: {
-		if (CUDA_MEM_HOSTREGISTER == ctx->gpu_mem_type) {
+		if (CUDA_MEM_HOSTREGISTER == gpu_mem_type) {
 			CUCHECK(cuMemHostUnregister(ptr));
 		}		
-		free(ctx->buf[0]);
+		free(ptr);
 		break;
 	}
 	default:
@@ -187,41 +296,79 @@ static int pp_free_gpu_buf(struct pingpong_context *ctx)
 		rc = 1;
 		goto err;
 	}
-	ctx->buf[0] = 0;
 err:
 	return rc;
+}
+
+static int pp_alloc_gpu_context(struct pingpong_context *ctx, int gpu_ordinal, CUdevice *p_gpu_device, CUcontext *p_gpu_context, int *p_gpu_has_uvmfull, int *p_gpu_has_ats)
+{
+        int rc = 0;
+	char name[128];
+	int pciDomainID, pciBusID, pciDeviceID;
+        CUdevice gpu_device;
+        CUcontext gpu_context;
+        CUresult error;
+	CUCHECK(cuDeviceGet(&gpu_device, gpu_ordinal));
+	CUCHECK(cuDeviceGetName(name, sizeof(name), gpu_device));
+	CUCHECK(cuDeviceGetAttribute(&pciDomainID, CU_DEVICE_ATTRIBUTE_PCI_DOMAIN_ID, gpu_device));
+	CUCHECK(cuDeviceGetAttribute(&pciBusID,    CU_DEVICE_ATTRIBUTE_PCI_BUS_ID,    gpu_device));
+	CUCHECK(cuDeviceGetAttribute(&pciDeviceID, CU_DEVICE_ATTRIBUTE_PCI_DEVICE_ID, gpu_device));
+	CUCHECK(cuDeviceGetAttribute(p_gpu_has_uvmfull, CU_DEVICE_ATTRIBUTE_CONCURRENT_MANAGED_ACCESS, gpu_device));
+	// approximating ATS with DIRECT_MANAGED_MEM_ACCESS_FROM_HOST, so far true on POWER9 only
+#if HAVE_CU_DEVICE_ATTRIBUTE_DIRECT_MANAGED_MEM_ACCESS_FROM_HOST
+	CUCHECK(cuDeviceGetAttribute(p_gpu_has_ats, CU_DEVICE_ATTRIBUTE_DIRECT_MANAGED_MEM_ACCESS_FROM_HOST, gpu_device));
+#else
+	*p_gpu_has_ats = 0;
+#endif
+        printf("GPU ordinal:%d device:%d name:%s PCI Domain/Bus/Dev: %04x/%02x/%02x ATS:%d\n",
+	       gpu_ordinal, gpu_device, name, pciDomainID, pciBusID, pciDeviceID, *p_gpu_has_ats);
+	/* Create context */
+	error = cuCtxCreate(&gpu_context, CU_CTX_MAP_HOST, gpu_device);
+	if (error != CUDA_SUCCESS) {
+		printf("cuCtxCreate() error=%d\n", error);
+		rc = 1;
+		goto err;
+	}
+        *p_gpu_context = gpu_context;
+        *p_gpu_device = gpu_device;
+err:
+        return rc;
 }
 
 static int pp_free_gpu(struct pingpong_context *ctx)
 {
 	int rc = 0;
 	if (ctx->buf[0]) {
-		rc = pp_free_gpu_buf(ctx);
-		// pass rc down
+		pp_free_gpu_buf(ctx, ctx->buf[0], ctx->gpu_mem_type);
+        }
+        if (ctx->gpu_ext_buf) {
+		pp_free_gpu_buf(ctx, ctx->gpu_ext_buf, ctx->gpu_ext_mem_type);
+        }
+        if (ctx->gpu_ext_context) {
+		printf("destroying ext CUDA Ctx\n");
+		CUCHECK(cuCtxDestroy(ctx->gpu_ext_context));
+		ctx->gpu_ext_context = 0;
         }
 	if (ctx->gpu_context) {
-		printf("destroying current CUDA Ctx\n");
+		printf("destroying main CUDA Ctx\n");
 		CUCHECK(cuCtxDestroy(ctx->gpu_context));
 		ctx->gpu_context = 0;
 	}
- err:
 	return rc;
 }
 
 void force_invalidation(struct pingpong_context *ctx)
 {
-    pp_free_gpu_buf(ctx);
+        pp_free_gpu_buf(ctx, ctx->buf[0], ctx->gpu_mem_type);
 }
 
-static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, size_t alignment, int gpu_ordinal, int mem_type, int mem_hints, int use_odp)
+static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, size_t alignment, int gpu_ordinal, int mem_type, int mem_hints, int use_odp, int gpu_ext_ordinal)
 {
 	int rc = 0;
 	// minimum mapping granularity for GPUDirect RDMA
 	const size_t gpu_page_size = 64*1024;
 	// round-up to gpu page size
 	size_t size = (_size + gpu_page_size - 1) & ~(gpu_page_size - 1);
-	char name[128];
-	int pciDomainID, pciBusID, pciDeviceID;
 	int device_count = 0;
 	CUresult error;
 	printf("initializing CUDA\n");
@@ -248,138 +395,53 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, size_t alignm
 		rc = 1;
 		goto err;
 	}
+
+        if (gpu_ext_ordinal >= 0) {
+                int gpu_ext_has_uvmfull;
+                int gpu_ext_has_ats;
+
+                printf("Picking ext GPU ordinal %d\n", gpu_ext_ordinal);
+                ctx->gpu_ext_ordinal = gpu_ext_ordinal;
+                ctx->gpu_ext_mem_type = CUDA_MEM_DEVICE;
+                if (gpu_ext_ordinal >= device_count) {
+                        printf("GPU ordinal %d was requested while there are only %d devices\n", gpu_ext_ordinal, device_count);
+                        rc = 1;
+                        goto err;
+                }
+                if (pp_alloc_gpu_context(ctx, gpu_ext_ordinal, &ctx->gpu_ext_device, &ctx->gpu_ext_context, &gpu_ext_has_uvmfull, &gpu_ext_has_ats)) {
+                        printf("Cannot create ext context for GPU ordinal %d\n", gpu_ext_ordinal);
+                        rc = 1;
+                        goto err;
+                }
+                if (pp_alloc_gpu_buf(ctx, &ctx->gpu_ext_buf, size, alignment, ctx->gpu_ext_mem_type, gpu_ext_has_ats)) {
+                        printf("Cannot create ext buffer for GPU ordinal %d\n", gpu_ext_ordinal);
+                        rc = 1;
+                        goto err_free_ctx;
+                }
+                printf("allocated GPU %d memory buffer at address %p\n", gpu_ext_ordinal, ctx->gpu_ext_buf);
+        } else {
+                ctx->gpu_ext_ordinal = -1;
+                ctx->gpu_ext_device = 0;
+                ctx->gpu_ext_context = 0;
+                ctx->gpu_ext_buf = 0;
+                ctx->gpu_ext_mem_type = CUDA_MEM_DEVICE;
+        }
+
 	printf("Picking GPU ordinal %d\n", gpu_ordinal);
 	ctx->gpu_ordinal = gpu_ordinal;
 	ctx->gpu_mem_type = mem_type;
 	ctx->gpu_mem_hints = mem_hints;
-	CUCHECK(cuDeviceGet(&ctx->gpu_device, ctx->gpu_ordinal));
-	CUCHECK(cuDeviceGetName(name, sizeof(name), ctx->gpu_device));
-	CUCHECK(cuDeviceGetAttribute(&pciDomainID, CU_DEVICE_ATTRIBUTE_PCI_DOMAIN_ID, ctx->gpu_device));
-	CUCHECK(cuDeviceGetAttribute(&pciBusID,    CU_DEVICE_ATTRIBUTE_PCI_BUS_ID,    ctx->gpu_device));
-	CUCHECK(cuDeviceGetAttribute(&pciDeviceID, CU_DEVICE_ATTRIBUTE_PCI_DEVICE_ID, ctx->gpu_device));
-	CUCHECK(cuDeviceGetAttribute(&ctx->gpu_has_uvmfull, CU_DEVICE_ATTRIBUTE_CONCURRENT_MANAGED_ACCESS, ctx->gpu_device));
-	// approximating ATS with DIRECT_MANAGED_MEM_ACCESS_FROM_HOST, so far true on POWER9 only
-#if HAVE_CU_DEVICE_ATTRIBUTE_DIRECT_MANAGED_MEM_ACCESS_FROM_HOST
-	CUCHECK(cuDeviceGetAttribute(&ctx->gpu_has_ats, CU_DEVICE_ATTRIBUTE_DIRECT_MANAGED_MEM_ACCESS_FROM_HOST, ctx->gpu_device));
-#else
-	ctx->gpu_has_ats = 0;
-#endif
-        printf("GPU ordinal:%d device:%d name:%s PCI Domain/Bus/Dev: %04x/%02x/%02x ATS:%d\n",
-	       ctx->gpu_ordinal, ctx->gpu_device, name, pciDomainID, pciBusID, pciDeviceID, ctx->gpu_has_ats);
-	/* Create context */
-	error = cuCtxCreate(&ctx->gpu_context, CU_CTX_MAP_HOST, ctx->gpu_device);
-	if (error != CUDA_SUCCESS) {
-		printf("cuCtxCreate() error=%d\n", error);
+        if (pp_alloc_gpu_context(ctx, ctx->gpu_ordinal, &ctx->gpu_device, &ctx->gpu_context, &ctx->gpu_has_uvmfull, &ctx->gpu_has_ats)) {
+		printf("Cannot create context for GPU ordinal %d\n", gpu_ordinal);
 		rc = 1;
 		goto err;
-	}
-	/* should not be necessary */
-	printf("making it the current CUDA Ctx\n");
-	error = cuCtxSetCurrent(ctx->gpu_context);
-	if (error != CUDA_SUCCESS) {
-		printf("cuCtxSetCurrent() error=%d\n", error);
-		rc = 1;
-		goto err_free_ctx;
-	}
-	ctx->buf[0] = 0;
-	switch (ctx->gpu_mem_type) {
-	// TODO: add Array memory type
-	case CUDA_MEM_DEVICE: {
-		// TODO: check alignment
-		// TODO: clear memory
-		CUdeviceptr d_ptr;
-		printf("cuMemAlloc() of a %zd bytes GPU buffer\n", size);
-		error = cuMemAlloc(&d_ptr, size);
-		if (error != CUDA_SUCCESS) {
-			printf("CUDA allocation failed with error=%d\n", error);
-			rc = 1;
-			goto err_free_ctx;
-		}
-		ctx->buf[0] = (void*)d_ptr;		
-		error = cuMemsetD8((CUdeviceptr)ctx->buf[0], (unsigned char)0xa5, size);
-		if (error != CUDA_SUCCESS) {
-			printf("CUDA memset failed with error=%d\n", error);
-			rc = 1;
-			goto err_free_buf;
-		}
-		break;
-	}
-	case CUDA_MEM_MANAGED: {
-		// TODO: check alignment
-		// TODO: clear memory
-		CUdeviceptr d_ptr;
-		if (!ctx->gpu_has_ats) {
-			printf("RDMA on CUDA managed memory requires an appropriate host platform\n");
-			rc = 1;
-			goto err_free_ctx;			
-		}
-		printf("cuMemAllocManaged() of %zd bytes\n", size);
-		error = cuMemAllocManaged(&d_ptr, size, CU_MEM_ATTACH_GLOBAL);
-		if (error != CUDA_SUCCESS) {
-			printf("CUDA allocation failed with error=%d\n", error);
-			rc = 1;
-			goto err_free_ctx;
-		}
-		ctx->buf[0] = (void*)d_ptr;
-		error = cuMemsetD8((CUdeviceptr)ctx->buf[0], (unsigned char)0xa5, size);
-		if (error != CUDA_SUCCESS) {
-			printf("CUDA memset failed with error=%d\n", error);
-			rc = 1;
-			goto err_free_buf;
-		}
-		break;
-	}
-	case CUDA_MEM_HOSTALLOC: {
-		void *ptr;
-		// NOTE: memory which does not migrate, even on platforms where it could, e.g. POWER9
-		// TODO: check alignment
-		printf("cuMemHostAlloc() of %zd bytes\n", size);
-		// NOTE: consider using CU_MEMHOSTALLOC_PORTABLE|CU_MEMHOSTALLOC_DEVICEMAP|CU_MEMHOSTALLOC_WRITECOMBINED
-		error = cuMemHostAlloc(&ptr, size, 0);
-		if (error != CUDA_SUCCESS) {
-			printf("CUDA allocation failed with error=%d\n", error);
-			rc = 1;
-			goto err_free_ctx;
-		}
-		ctx->buf[0] = ptr;
-		error = cuMemsetD8((CUdeviceptr)ctx->buf[0], (unsigned char)0xa5, size);
-		if (error != CUDA_SUCCESS) {
-			printf("CUDA memset failed with error=%d\n", error);
-			rc = 1;
-			goto err_free_buf;
-		}
-		break;
-	}
-	// TODO: add static memory type
-	case CUDA_MEM_MALLOC:
-		// NOTE: the CUDA_MEM_MALLOC is already covered by the standard non-CUDA case,
-		// but actually this one allows to set CUDA attributes.
-	case CUDA_MEM_HOSTREGISTER: {
-		void *ptr;
-		printf("memalign() of %zd bytes\n", size);
-		#if defined(__FreeBSD__)
-		posix_memalign(&ptr, alignment, size);
-		#else
-		ptr = memalign(alignment, size);
-		#endif
-		if (!ptr) {
-			printf("error: malloc allocation failure errno=%d\n", errno);
-			rc = 1;
-			goto err_free_ctx;
-		}
-		memset(ptr, (unsigned char)0xa5, size);
-		if (CUDA_MEM_HOSTREGISTER == ctx->gpu_mem_type) {
-			// TODO: check CU_DEVICE_ATTRIBUTE_HOST_REGISTER_SUPPORTED
-			// NOTE: consider using CU_MEMHOSTREGISTER_PORTABLE|CU_MEMHOSTREGISTER_DEVICEMAP
-			CUCHECK(cuMemHostRegister(ptr, size, 0));
-		}
-		ctx->buf[0] = ptr;
-		break;
-	}
-	default:
-		rc = 1;
-		goto err_free_ctx;
-	}
+        }
+	printf("Making GPU ordinal %d the current CUDA context\n", ctx->gpu_ordinal);
+	CUCHECK(cuCtxSetCurrent(ctx->gpu_context));
+        if (pp_alloc_gpu_buf(ctx, ctx->buf, size, alignment, ctx->gpu_mem_type, ctx->gpu_has_ats)) {
+                rc = 1;
+                goto err_free_ctx;
+        }
 	if (set_memory_hints((CUdeviceptr)ctx->buf[0], size, ctx->gpu_device, ctx->gpu_mem_type, ctx->gpu_mem_hints, ctx->gpu_has_uvmfull, ctx->gpu_has_ats)) {
 		rc = 1;
 		goto err_free_buf;
@@ -393,6 +455,51 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, size_t alignm
  err:
 	return rc;
 }
+
+static int pp_gpu_copy_async(struct pingpong_context *ctx, struct ibv_recv_wr *rwr, unsigned long offset)
+{
+        int rc = 0;
+        CUdeviceptr dst = (CUdeviceptr)ctx->gpu_ext_buf + offset;
+        size_t nbytes = rwr->sg_list->length;
+        CUdeviceptr src = (CUdeviceptr)rwr->sg_list->addr;
+        // using main GPU stream (prefer push)
+        CUCHECK(cuMemcpyAsync(dst, src, nbytes, ctx->gpu_stream));
+        CUCHECK(cuStreamWriteValue32(ctx->gpu_stream, (CUdeviceptr)ctx->gpu_ext_ptr_cnt, rwr->wr_id, CU_STREAM_WRITE_VALUE_NO_MEMORY_BARRIER));
+        return rc;
+}
+
+static inline void arch_pause(void)
+{
+        asm volatile("pause\n": : :"memory");
+}
+
+static int pp_gpu_sync(struct pingpong_context *ctx, int wr_id)
+{
+        int rc = 0;
+        int iter = 0;
+        while(1) {
+                cuuint32_t cnt = *(volatile cuuint32_t *)ctx->gpu_ext_ptr_cnt;
+                if ((int)cnt >= wr_id) {
+                        break;
+                }
+                ++iter;
+                if (0 == iter % 16) {
+                        arch_pause();
+                }
+                if (0 == iter % 1024*1024) {
+                        CUresult error = cuStreamQuery(ctx->gpu_stream);
+                        if (error == CUDA_SUCCESS || error == CUDA_ERROR_NOT_READY) {
+                                // stream is either free or busy
+                        } else {
+                                fprintf(stderr, "Detected GPU error %d while querying stream\n", error);
+                                rc = 1;
+                                break;
+                        }
+                }
+        }
+        return rc;
+}
+
 #endif
 
 static int pp_init_mmap(struct pingpong_context *ctx, size_t size,
@@ -1451,7 +1558,7 @@ int create_single_mr(struct pingpong_context *ctx, struct perftest_parameters *u
 		}
 		use_odp = user_param->use_odp;
 		#endif
-		if (pp_init_gpu(ctx, ctx->buff_size, user_param->cycle_buffer, user_param->cuda_ordinal, user_param->cuda_mem_type, user_param->cuda_mem_hints, use_odp)) {
+		if (pp_init_gpu(ctx, ctx->buff_size, user_param->cycle_buffer, user_param->cuda_ordinal, user_param->cuda_mem_type, user_param->cuda_mem_hints, use_odp, user_param->cuda_ext_ordinal)) {
 			fprintf(stderr, "Couldn't allocate CUDA work buf.\n");
 			return FAILURE;
 		}
@@ -3755,6 +3862,26 @@ int run_iter_bw_server(struct pingpong_context *ctx, struct perftest_parameters 
 						}
 						user_param->iters++;
 					}
+
+#ifdef HAVE_CUDA
+                                        if (ctx->gpu_ext_buf) {
+                                                unsigned long offset = 0;
+                                                if (!user_param->mr_per_qp) {
+                                                        offset = (char *)ctx->rwr[wc_id].sg_list->addr - (char *)ctx->buf[0];
+                                                } else {
+                                                        offset = (char *)ctx->rwr[wc_id].sg_list->addr - (char *)ctx->buf[i];
+                                                }
+                                                pp_gpu_copy_async(ctx, &ctx->rwr[wc_id], offset);
+                                        }
+                                }
+				for (i = 0; i < ne; i++) {
+					wc_id = (user_param->verb_type == ACCL_INTF) ?
+						0 : (int)wc[i].wr_id;
+                                        // wait for wc_id copy to finish, before posting the recv buffer
+                                        if (ctx->gpu_ext_buf) {
+                                                pp_gpu_sync(ctx, wc_id);
+                                        }
+#endif
 					if (user_param->test_type==DURATION || rcnt_for_qp[wc_id] + size_per_qp <= user_param->iters) {
 						#ifdef HAVE_ACCL_VERBS
 						if (user_param->verb_type == ACCL_INTF) {

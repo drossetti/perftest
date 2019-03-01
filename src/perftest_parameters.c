@@ -469,6 +469,8 @@ static void usage(const char *argv0, VerbType verb, TestType tst, int connection
 		printf("      Memory hints are supported on both host and managed memory.\n");
 		printf("      --cuda_force_invalidation=<I> ");
 		printf(" Trigger a memory registration invalidation at iteration I when --all is used, should be less than 23.\n");
+		printf("      --cuda_use_ext_gpu=<N> ");
+		printf(" Select GPU ordinal N for extra testing. Default is not used (-1).\n");
 		#endif
 
 		#ifdef HAVE_VERBS_EXP
@@ -677,6 +679,7 @@ static void init_perftest_params(struct perftest_parameters *user_param)
 	user_param->cuda_mem_type	= CUDA_MEM_DEVICE;
 	user_param->cuda_mem_hints	= CUDA_MEM_NO_HINTS;
         user_param->cuda_force_invalidation = INT_MAX;
+	user_param->cuda_ext_ordinal    = -1;
 	#endif
 	user_param->mmap_file		= NULL;
 	user_param->mmap_offset		= 0;
@@ -1751,6 +1754,7 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 	static int cuda_mem_type_flag = 0;
 	static int cuda_mem_hints_flag = 0;
 	static int cuda_force_invalidation = 0;
+	static int cuda_ext_ordinal_flag = 0;
 	#endif
 	static int mmap_file_flag = 0;
 	static int mmap_offset_flag = 0;
@@ -1877,6 +1881,7 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 			{ .name = "cuda_mem_type",	.has_arg = required_argument, .flag = &cuda_mem_type_flag, .val = 1},
 			{ .name = "cuda_mem_hints",	.has_arg = required_argument, .flag = &cuda_mem_hints_flag, .val = 1},
 			{ .name = "cuda_force_invalidation", .has_arg = required_argument, .flag = &cuda_force_invalidation, .val = 1},
+			{ .name = "cuda_use_ext_gpu",	.has_arg = required_argument, .flag = &cuda_ext_ordinal_flag, .val = 1},
 			#endif
 			{ .name = "mmap",		.has_arg = 1, .flag = &mmap_file_flag, .val = 1},
 			{ .name = "mmap-offset",	.has_arg = 1, .flag = &mmap_offset_flag, .val = 1},
@@ -2150,6 +2155,10 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 				#ifdef HAVE_CUDA
 				if (cuda_ordinal_flag) {
 					user_param->cuda_ordinal = strtol(optarg,NULL,0);
+					if (user_param->cuda_ordinal < 0) {
+						fprintf(stderr, " invalid GPU ordinal %d\n", user_param->cuda_ordinal);
+						return FAILURE;
+					}
 					cuda_ordinal_flag = 0;
 				}
 				if (cuda_mem_type_flag) {
@@ -2175,6 +2184,14 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 						return FAILURE;
 					}
 					cuda_force_invalidation = 0;
+				}
+				if (cuda_ext_ordinal_flag) {
+					user_param->cuda_ext_ordinal = strtol(optarg,NULL,0);
+					if (user_param->cuda_ext_ordinal < 0) {
+						fprintf(stderr, " invalid GPU ext ordinal %d\n", user_param->cuda_ext_ordinal);
+						return FAILURE;
+					}
+					cuda_ext_ordinal_flag = 0;
 				}
 				#endif
 				if (pkey_flag) {
