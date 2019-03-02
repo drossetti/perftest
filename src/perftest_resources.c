@@ -265,6 +265,8 @@ static int pp_alloc_gpu_buf(struct pingpong_context *ctx, void **pbuf, size_t si
 		rc = 1;
 		goto err;
 	}
+    pbuf[0] = buf;
+
 err:
         return rc;
 }
