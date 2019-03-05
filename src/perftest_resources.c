@@ -488,6 +488,18 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, size_t alignm
 	return rc;
 }
 
+static int pp_gpu_copy_sync(struct pingpong_context *ctx, struct ibv_recv_wr *rwr, unsigned long offset)
+{
+    int rc = 0;
+    CUdeviceptr dst = (CUdeviceptr)ctx->gpu_ext_buf + offset;
+    size_t nbytes = rwr->sg_list->length;
+    CUdeviceptr src = (CUdeviceptr)rwr->sg_list->addr;
+    // using main GPU stream (prefer push)
+    CUCHECK(cuMemcpyAsync(dst, src, nbytes, ctx->gpu_stream));
+    CUCHECK(cuStreamSynchronize(ctx->gpu_stream));
+    return rc;
+}
+
 static int pp_gpu_copy_async(struct pingpong_context *ctx, struct ibv_recv_wr *rwr, unsigned long offset, CUdeviceptr cnt)
 {
     int rc = 0;
@@ -4043,6 +4055,9 @@ cleaning:
 	check_alive_data.last_totrcnt=0;
 	free(wc);
 	free(rcnt_for_qp);
+#ifdef HAVE_CUDA
+    free(rcnt_for_qp_tmp);
+#endif
 	free(swc);
 	free(scredit_for_qp);
 
@@ -4950,6 +4965,14 @@ int run_iter_lat_send(struct pingpong_context *ctx,struct perftest_parameters *u
 						NOTIFY_COMP_ERROR_RECV(wc,rcnt);
 						return 1;
 					}
+
+#ifdef HAVE_CUDA
+                    if (ctx->gpu_ext_buf) {
+                        int wc_id = wc.wr_id;
+                        unsigned long offset = (char *)ctx->rwr[wc_id].sg_list->addr - (char *)ctx->buf[0];
+                        pp_gpu_copy_sync(ctx, &ctx->rwr[wc_id], offset);
+                    }
+#endif
 
 					rcnt++;
 
