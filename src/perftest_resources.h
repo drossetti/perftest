@@ -170,23 +170,23 @@ struct pingpong_context {
 	int 					fd;
 	#endif
 	#if defined(HAVE_VERBS_EXP)
-        drv_exp_post_send_func			exp_post_send_func_pointer;
-        drv_post_send_func			post_send_func_pointer;
-	drv_poll_cq_func			poll_cq_func_pointer;
-	struct ibv_exp_dct			**dct;
-	struct ibv_exp_send_wr			*exp_wr;
+    drv_exp_post_send_func      exp_post_send_func_pointer;
+    drv_post_send_func          post_send_func_pointer;
+    drv_poll_cq_func            poll_cq_func_pointer;
+    struct ibv_exp_dct          **dct;
+    struct ibv_exp_send_wr      *exp_wr;
 	#endif
 	#ifdef HAVE_ACCL_VERBS
-	struct ibv_exp_res_domain		*res_domain;
-	struct ibv_exp_cq_family		*send_cq_family;
-	struct ibv_exp_cq_family		*recv_cq_family;
-	struct ibv_exp_qp_burst_family		**qp_burst_family;
+    struct ibv_exp_res_domain           *res_domain;
+    struct ibv_exp_cq_family            *send_cq_family;
+    struct ibv_exp_cq_family            *recv_cq_family;
+    struct ibv_exp_qp_burst_family      **qp_burst_family;
 	#endif
 	#ifdef HAVE_CUDA
 	int                                     gpu_ordinal;
 	CUdevice                                gpu_device;
 	CUcontext                               gpu_context;
-        CUstream                                gpu_stream;
+    CUstream                                gpu_stream;
 	int                                     gpu_mem_type;
 	int                                     gpu_mem_hints;
 	int                                     gpu_has_ats;
@@ -194,10 +194,12 @@ struct pingpong_context {
 	int                                     gpu_ext_ordinal;   
 	CUdevice                                gpu_ext_device;
 	CUcontext                               gpu_ext_context;
-        CUstream                                gpu_ext_stream;
-	void				       *gpu_ext_buf;
+    CUstream                                gpu_ext_stream;
+	void				                    *gpu_ext_buf;
 	int                                     gpu_ext_mem_type;
-        cuuint32_t                             *gpu_ext_ptr_cnt;
+    cuuint32_t                              *gpu_ext_ptr_cnt;
+    /* device pointer linked to gpu_ext_ptr_cnt */
+    CUdeviceptr                             gpu_ext_dev_ptr_cnt;
 	#endif
 };
 
