@@ -442,7 +442,6 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, size_t alignm
             rc = 1;
             goto err;
         }
-        error = cuMemsetD32(ctx->gpu_ext_dev_ptr_cnt, 0xfffffffe, CTX_POLL_BATCH);
         if (pp_alloc_gpu_buf(ctx, &ctx->gpu_ext_buf, size, alignment, ctx->gpu_ext_mem_type, gpu_ext_has_ats)) {
             printf("Cannot create ext buffer for GPU ordinal %d\n", gpu_ext_ordinal);
             rc = 1;
@@ -3841,6 +3840,10 @@ int run_iter_bw_server(struct pingpong_context *ctx, struct perftest_parameters 
 #ifdef HAVE_CUDA
 	ALLOCATE(rcnt_for_qp_tmp,uint64_t,user_param->num_of_qps);
 	memset(rcnt_for_qp_tmp,0,sizeof(uint64_t)*user_param->num_of_qps);
+
+    CUCHECK(cuStreamSynchronize(ctx->gpu_stream));
+    if (ctx->gpu_ext_buf)
+        CUCHECK(cuMemsetD32(ctx->gpu_ext_dev_ptr_cnt, 0xfffffffe, CTX_POLL_BATCH));
 #endif
 
 	ALLOCATE(scredit_for_qp,long,user_param->num_of_qps);
@@ -4025,8 +4028,11 @@ int run_iter_bw_server(struct pingpong_context *ctx, struct perftest_parameters 
 						}
 					}
 				}
+#ifdef HAVE_CUDA
+                if (ctx->gpu_ext_buf)
+                    CUCHECK(cuMemsetD32(ctx->gpu_ext_dev_ptr_cnt, 0xfffffffe, CTX_POLL_BATCH));
+#endif
 			}
-
 		} while (ne > 0);
 
 		if (ne < 0) {
