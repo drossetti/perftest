@@ -413,6 +413,7 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, size_t alignm
 		rc = 1;
 		goto err;
 	} 
+
 	if (gpu_ordinal >= device_count) {
 		printf("GPU ordinal %d was requested while there are only %d devices\n", gpu_ordinal, device_count);
 		rc = 1;
@@ -430,13 +431,13 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, size_t alignm
         if (gpu_ext_ordinal >= device_count) {
             printf("GPU ordinal %d was requested while there are only %d devices\n", gpu_ext_ordinal, device_count);
             rc = 1;
-            goto err;
+            goto err_free_ctx;
         }
 
         if (pp_alloc_gpu_context(ctx, gpu_ext_ordinal, &ctx->gpu_ext_device, &ctx->gpu_ext_context, &gpu_ext_has_uvmfull, &gpu_ext_has_ats)) {
             printf("Cannot create ext context for GPU ordinal %d\n", gpu_ext_ordinal);
             rc = 1;
-            goto err;
+            goto err_free_ctx;
         }
 
         ctx->gpu_ext_streams = calloc(gpu_ext_num_streams, sizeof(CUstream));
@@ -499,6 +500,15 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, size_t alignm
 	printf("Making GPU ordinal %d the current CUDA context\n", ctx->gpu_ordinal);
 	CUCHECK(cuCtxSetCurrent(ctx->gpu_context));
 
+    if (gpu_ext_ordinal >= 0) {
+        error = cuCtxEnablePeerAccess(ctx->gpu_ext_context, 0);
+        if (error != CUDA_SUCCESS) {
+            printf("cuCtxEnablePeerAccess failed with error %d\n", error);
+            rc = 1;
+            goto err_free_ctx;
+        }
+    }
+
     if (pp_alloc_gpu_buf(ctx, ctx->buf, size, alignment, ctx->gpu_mem_type, ctx->gpu_has_ats)) {
         rc = 1;
         goto err_free_ctx;
@@ -508,8 +518,8 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, size_t alignm
 		rc = 1;
 		goto err_free_buf;
 	}
-
 	printf("allocated memory buffer at address %p\n", ctx->buf[0]);
+
     return 0;
 	
  err_free_buf:
