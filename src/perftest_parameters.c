@@ -471,6 +471,8 @@ static void usage(const char *argv0, VerbType verb, TestType tst, int connection
 		printf(" Trigger a memory registration invalidation at iteration I when --all is used, should be less than 23.\n");
 		printf("      --cuda_use_ext_gpu=<N> ");
 		printf(" Select GPU ordinal N for extra testing. Default is not used (-1).\n");
+        printf("      --cuda_num_ext_streams=<N> ");
+        printf(" Number of CUDA streams for ext GPU copy.\n");
 		#endif
 
 		#ifdef HAVE_VERBS_EXP
@@ -1755,6 +1757,7 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 	static int cuda_mem_hints_flag = 0;
 	static int cuda_force_invalidation = 0;
 	static int cuda_ext_ordinal_flag = 0;
+	static int cuda_num_ext_streams_flag = 0;
 	#endif
 	static int mmap_file_flag = 0;
 	static int mmap_offset_flag = 0;
@@ -1882,6 +1885,7 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 			{ .name = "cuda_mem_hints",	.has_arg = required_argument, .flag = &cuda_mem_hints_flag, .val = 1},
 			{ .name = "cuda_force_invalidation", .has_arg = required_argument, .flag = &cuda_force_invalidation, .val = 1},
 			{ .name = "cuda_use_ext_gpu",	.has_arg = required_argument, .flag = &cuda_ext_ordinal_flag, .val = 1},
+			{ .name = "cuda_num_ext_streams",	.has_arg = required_argument, .flag = &cuda_num_ext_streams_flag, .val = 1},
 			#endif
 			{ .name = "mmap",		.has_arg = 1, .flag = &mmap_file_flag, .val = 1},
 			{ .name = "mmap-offset",	.has_arg = 1, .flag = &mmap_offset_flag, .val = 1},
@@ -2193,6 +2197,14 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 					}
 					cuda_ext_ordinal_flag = 0;
 				}
+                if (cuda_num_ext_streams_flag) {
+                    user_param->cuda_num_ext_streams = strtol(optarg,NULL,1);
+                    if (user_param->cuda_num_ext_streams < 0) {
+                        fprintf(stderr, " invalid number of CUDA streams for ext GPU %d\n", user_param->cuda_num_ext_streams);
+                        return FAILURE;
+                    }
+                    cuda_num_ext_streams_flag = 0;
+                }
 				#endif
 				if (pkey_flag) {
 					user_param->pkey_index = strtol(optarg,NULL,0);

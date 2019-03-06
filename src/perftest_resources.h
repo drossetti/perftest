@@ -194,7 +194,8 @@ struct pingpong_context {
 	int                                     gpu_ext_ordinal;   
 	CUdevice                                gpu_ext_device;
 	CUcontext                               gpu_ext_context;
-    CUstream                                gpu_ext_stream;
+    int                                     gpu_ext_num_streams;
+    CUstream                                *gpu_ext_streams;
 	void				                    *gpu_ext_buf;
 	int                                     gpu_ext_mem_type;
     cuuint32_t                              *gpu_ext_ptr_cnt;

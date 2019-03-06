@@ -329,8 +329,8 @@ static int pp_alloc_gpu_context(struct pingpong_context *ctx, int gpu_ordinal, C
 #else
 	*p_gpu_has_ats = 0;
 #endif
-        printf("GPU ordinal:%d device:%d name:%s PCI Domain/Bus/Dev: %04x/%02x/%02x ATS:%d\n",
-	       gpu_ordinal, gpu_device, name, pciDomainID, pciBusID, pciDeviceID, *p_gpu_has_ats);
+    printf("GPU ordinal:%d device:%d name:%s PCI Domain/Bus/Dev: %04x/%02x/%02x ATS:%d\n",
+            gpu_ordinal, gpu_device, name, pciDomainID, pciBusID, pciDeviceID, *p_gpu_has_ats);
 	/* Create context */
 	error = cuCtxCreate(&gpu_context, CU_CTX_MAP_HOST, gpu_device);
 	if (error != CUDA_SUCCESS) {
@@ -338,8 +338,8 @@ static int pp_alloc_gpu_context(struct pingpong_context *ctx, int gpu_ordinal, C
 		rc = 1;
 		goto err;
 	}
-        *p_gpu_context = gpu_context;
-        *p_gpu_device = gpu_device;
+    *p_gpu_context = gpu_context;
+    *p_gpu_device = gpu_device;
 err:
         return rc;
 }
@@ -356,6 +356,12 @@ static int pp_free_gpu(struct pingpong_context *ctx)
 
     if (ctx->gpu_ext_ptr_cnt)
         pp_free_gpu_buf(ctx, ctx->gpu_ext_ptr_cnt, CUDA_MEM_HOSTALLOC);
+
+    if (ctx->gpu_ext_streams) {
+        for (; ctx->gpu_ext_num_streams > 0; ctx->gpu_ext_num_streams--)
+            CUCHECK(cuStreamDestroy(ctx->gpu_ext_streams[ctx->gpu_ext_num_streams - 1]));
+        free(ctx->gpu_ext_streams);
+    }
 
     ctx->gpu_ext_dev_ptr_cnt = 0;
 
@@ -379,7 +385,7 @@ void force_invalidation(struct pingpong_context *ctx)
         pp_free_gpu_buf(ctx, ctx->buf[0], ctx->gpu_mem_type);
 }
 
-static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, size_t alignment, int gpu_ordinal, int mem_type, int mem_hints, int use_odp, int gpu_ext_ordinal)
+static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, size_t alignment, int gpu_ordinal, int mem_type, int mem_hints, int use_odp, int gpu_ext_ordinal, int gpu_ext_num_streams)
 {
 	int rc = 0;
 	// minimum mapping granularity for GPUDirect RDMA
@@ -420,28 +426,48 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, size_t alignm
         printf("Picking ext GPU ordinal %d\n", gpu_ext_ordinal);
         ctx->gpu_ext_ordinal = gpu_ext_ordinal;
         ctx->gpu_ext_mem_type = CUDA_MEM_DEVICE;
+
         if (gpu_ext_ordinal >= device_count) {
             printf("GPU ordinal %d was requested while there are only %d devices\n", gpu_ext_ordinal, device_count);
             rc = 1;
             goto err;
         }
+
         if (pp_alloc_gpu_context(ctx, gpu_ext_ordinal, &ctx->gpu_ext_device, &ctx->gpu_ext_context, &gpu_ext_has_uvmfull, &gpu_ext_has_ats)) {
             printf("Cannot create ext context for GPU ordinal %d\n", gpu_ext_ordinal);
             rc = 1;
             goto err;
         }
+
+        ctx->gpu_ext_streams = calloc(gpu_ext_num_streams, sizeof(CUstream));
+        if (ctx->gpu_ext_streams == NULL) {
+            printf("Cannot allocate gpu_ext_streams\n");
+            rc = 1;
+            goto err_free_ctx;
+        }
+        for (ctx->gpu_ext_num_streams = 0; ctx->gpu_ext_num_streams < gpu_ext_num_streams; ctx->gpu_ext_num_streams++) {
+            error = cuStreamCreate(ctx->gpu_ext_streams + ctx->gpu_ext_num_streams, CU_STREAM_NON_BLOCKING);
+            if (error != CUDA_SUCCESS) {
+                printf("cuStreamCreate for gpu_ext_streams[%d] returned %d\n", ctx->gpu_ext_num_streams, error);
+                rc = 1;
+                goto err_free_ctx;
+            }
+        }
+            
         error = cuMemHostAlloc((void **)(&ctx->gpu_ext_ptr_cnt), sizeof(cuuint32_t) * CTX_POLL_BATCH, CU_MEMHOSTALLOC_PORTABLE|CU_MEMHOSTALLOC_DEVICEMAP|CU_MEMHOSTALLOC_WRITECOMBINED);
         if (error != CUDA_SUCCESS) {
             printf("cuMemHostAlloc for gpu_ext_ptr_cnt returned %d\n", error);
             rc = 1;
-            goto err;
+            goto err_free_ctx;
         }
+
         error = cuMemHostGetDevicePointer(&ctx->gpu_ext_dev_ptr_cnt, ctx->gpu_ext_ptr_cnt, 0);
         if (error != CUDA_SUCCESS) {
             printf("cuMemHostGetDevicePointer for gpu_ext_dev_ptr_cnt returned %d\n", error);
             rc = 1;
-            goto err;
+            goto err_free_ctx;
         }
+
         if (pp_alloc_gpu_buf(ctx, &ctx->gpu_ext_buf, size, alignment, ctx->gpu_ext_mem_type, gpu_ext_has_ats)) {
             printf("Cannot create ext buffer for GPU ordinal %d\n", gpu_ext_ordinal);
             rc = 1;
@@ -456,29 +482,34 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, size_t alignm
         ctx->gpu_ext_ptr_cnt = 0;
         ctx->gpu_ext_dev_ptr_cnt = 0;
         ctx->gpu_ext_mem_type = CUDA_MEM_DEVICE;
+        ctx->gpu_ext_streams = 0;
     }
 
 	printf("Picking GPU ordinal %d\n", gpu_ordinal);
 	ctx->gpu_ordinal = gpu_ordinal;
 	ctx->gpu_mem_type = mem_type;
 	ctx->gpu_mem_hints = mem_hints;
-        if (pp_alloc_gpu_context(ctx, ctx->gpu_ordinal, &ctx->gpu_device, &ctx->gpu_context, &ctx->gpu_has_uvmfull, &ctx->gpu_has_ats)) {
-		printf("Cannot create context for GPU ordinal %d\n", gpu_ordinal);
-		rc = 1;
-		goto err;
-        }
+
+    if (pp_alloc_gpu_context(ctx, ctx->gpu_ordinal, &ctx->gpu_device, &ctx->gpu_context, &ctx->gpu_has_uvmfull, &ctx->gpu_has_ats)) {
+        printf("Cannot create context for GPU ordinal %d\n", gpu_ordinal);
+        rc = 1;
+        goto err;
+    }
 	printf("Making GPU ordinal %d the current CUDA context\n", ctx->gpu_ordinal);
 	CUCHECK(cuCtxSetCurrent(ctx->gpu_context));
-        if (pp_alloc_gpu_buf(ctx, ctx->buf, size, alignment, ctx->gpu_mem_type, ctx->gpu_has_ats)) {
-                rc = 1;
-                goto err_free_ctx;
-        }
+
+    if (pp_alloc_gpu_buf(ctx, ctx->buf, size, alignment, ctx->gpu_mem_type, ctx->gpu_has_ats)) {
+        rc = 1;
+        goto err_free_ctx;
+    }
+
 	if (set_memory_hints((CUdeviceptr)ctx->buf[0], size, ctx->gpu_device, ctx->gpu_mem_type, ctx->gpu_mem_hints, ctx->gpu_has_uvmfull, ctx->gpu_has_ats)) {
 		rc = 1;
 		goto err_free_buf;
 	}
+
 	printf("allocated memory buffer at address %p\n", ctx->buf[0]);
-        return 0;
+    return 0;
 	
  err_free_buf:
  err_free_ctx:
@@ -499,15 +530,16 @@ static int pp_gpu_copy_sync(struct pingpong_context *ctx, struct ibv_recv_wr *rw
     return rc;
 }
 
-static int pp_gpu_copy_async(struct pingpong_context *ctx, struct ibv_recv_wr *rwr, unsigned long offset, CUdeviceptr cnt)
+static int pp_gpu_copy_async(struct pingpong_context *ctx, struct ibv_recv_wr *rwr, unsigned long offset, CUdeviceptr cnt, CUstream stream)
 {
     int rc = 0;
     CUdeviceptr dst = (CUdeviceptr)ctx->gpu_ext_buf + offset;
     size_t nbytes = rwr->sg_list->length;
     CUdeviceptr src = (CUdeviceptr)rwr->sg_list->addr;
-    // using main GPU stream (prefer push)
-    CUCHECK(cuMemcpyAsync(dst, src, nbytes, ctx->gpu_stream));
-    CUCHECK(cuStreamWriteValue32(ctx->gpu_stream, cnt, rwr->wr_id, CU_STREAM_WRITE_VALUE_NO_MEMORY_BARRIER));
+
+    // Push to ext GPU on the specified stream
+    CUCHECK(cuMemcpyAsync(dst, src, nbytes, stream));
+    CUCHECK(cuStreamWriteValue32(stream, cnt, rwr->wr_id, CU_STREAM_WRITE_VALUE_NO_MEMORY_BARRIER));
     return rc;
 }
 
@@ -516,7 +548,7 @@ static inline void arch_pause(void)
     asm volatile("pause\n": : :"memory");
 }
 
-static int pp_gpu_sync(struct pingpong_context *ctx, int wr_id, volatile cuuint32_t *ptr_cnt)
+static int pp_gpu_sync(struct pingpong_context *ctx, int wr_id, volatile cuuint32_t *ptr_cnt, CUstream stream)
 {
     int rc = 0;
     int iter = 0;
@@ -530,7 +562,7 @@ static int pp_gpu_sync(struct pingpong_context *ctx, int wr_id, volatile cuuint3
             arch_pause();
         }
         if (0 == iter % 1024*1024) {
-            CUresult error = cuStreamQuery(ctx->gpu_stream);
+            CUresult error = cuStreamQuery(stream);
             if (error == CUDA_SUCCESS || error == CUDA_ERROR_NOT_READY) {
                 // stream is either free or busy
             } else {
@@ -540,6 +572,8 @@ static int pp_gpu_sync(struct pingpong_context *ctx, int wr_id, volatile cuuint3
             }
         }
     }
+    if (rc == 0)
+        *ptr_cnt = 0xfffffffe; // reset the cnt value
     return rc;
 }
 
@@ -1601,7 +1635,7 @@ int create_single_mr(struct pingpong_context *ctx, struct perftest_parameters *u
 		}
 		use_odp = user_param->use_odp;
 		#endif
-		if (pp_init_gpu(ctx, ctx->buff_size, user_param->cycle_buffer, user_param->cuda_ordinal, user_param->cuda_mem_type, user_param->cuda_mem_hints, use_odp, user_param->cuda_ext_ordinal)) {
+		if (pp_init_gpu(ctx, ctx->buff_size, user_param->cycle_buffer, user_param->cuda_ordinal, user_param->cuda_mem_type, user_param->cuda_mem_hints, use_odp, user_param->cuda_ext_ordinal, user_param->cuda_num_ext_streams)) {
 			fprintf(stderr, "Couldn't allocate CUDA work buf.\n");
 			return FAILURE;
 		}
@@ -3842,8 +3876,11 @@ int run_iter_bw_server(struct pingpong_context *ctx, struct perftest_parameters 
 	memset(rcnt_for_qp_tmp,0,sizeof(uint64_t)*user_param->num_of_qps);
 
     CUCHECK(cuStreamSynchronize(ctx->gpu_stream));
-    if (ctx->gpu_ext_buf)
+    if (ctx->gpu_ext_buf) {
+        for (i = 0; i < user_param->cuda_num_ext_streams; i++)
+            CUCHECK(cuStreamSynchronize(ctx->gpu_ext_streams[i]));
         CUCHECK(cuMemsetD32(ctx->gpu_ext_dev_ptr_cnt, 0xfffffffe, CTX_POLL_BATCH));
+    }
 #endif
 
 	ALLOCATE(scredit_for_qp,long,user_param->num_of_qps);
@@ -3922,7 +3959,7 @@ int run_iter_bw_server(struct pingpong_context *ctx, struct perftest_parameters 
                         } else {
                             offset = (char *)ctx->rwr[wc_id].sg_list->addr - (char *)ctx->buf[i];
                         }
-                        pp_gpu_copy_async(ctx, &ctx->rwr[wc_id], offset, (CUdeviceptr)((cuuint32_t *)ctx->gpu_ext_dev_ptr_cnt + i));
+                        pp_gpu_copy_async(ctx, &ctx->rwr[wc_id], offset, (CUdeviceptr)((cuuint32_t *)ctx->gpu_ext_dev_ptr_cnt + i), ctx->gpu_ext_streams[i % ctx->gpu_ext_num_streams]);
                     }
                 }
 				for (i = 0; i < ne; i++) {
@@ -3930,7 +3967,7 @@ int run_iter_bw_server(struct pingpong_context *ctx, struct perftest_parameters 
 						0 : (int)wc[i].wr_id;
                     // wait for wc_id copy to finish, before posting the recv buffer
                     if (ctx->gpu_ext_buf) {
-                        pp_gpu_sync(ctx, wc_id, ctx->gpu_ext_ptr_cnt + i);
+                        pp_gpu_sync(ctx, wc_id, ctx->gpu_ext_ptr_cnt + i, ctx->gpu_ext_streams[i % ctx->gpu_ext_num_streams]);
                     }
 #endif
 
@@ -4028,10 +4065,6 @@ int run_iter_bw_server(struct pingpong_context *ctx, struct perftest_parameters 
 						}
 					}
 				}
-#ifdef HAVE_CUDA
-                if (ctx->gpu_ext_buf)
-                    CUCHECK(cuMemsetD32(ctx->gpu_ext_dev_ptr_cnt, 0xfffffffe, CTX_POLL_BATCH));
-#endif
 			}
 		} while (ne > 0);
 
