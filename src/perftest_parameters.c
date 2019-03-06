@@ -472,7 +472,7 @@ static void usage(const char *argv0, VerbType verb, TestType tst, int connection
 		printf("      --cuda_use_ext_gpu=<N> ");
 		printf(" Select GPU ordinal N for extra testing. Default is not used (-1).\n");
         printf("      --cuda_num_ext_streams=<N> ");
-        printf(" Number of CUDA streams for ext GPU copy.\n");
+        printf(" Number of CUDA streams for ext GPU copy Default is 1.\n");
 		#endif
 
 		#ifdef HAVE_VERBS_EXP
@@ -2198,13 +2198,15 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 					cuda_ext_ordinal_flag = 0;
 				}
                 if (cuda_num_ext_streams_flag) {
-                    user_param->cuda_num_ext_streams = strtol(optarg,NULL,1);
-                    if (user_param->cuda_num_ext_streams < 0) {
-                        fprintf(stderr, " invalid number of CUDA streams for ext GPU %d\n", user_param->cuda_num_ext_streams);
+                    user_param->cuda_num_ext_streams = strtol(optarg,NULL,0);
+                    if (user_param->cuda_num_ext_streams <= 0) {
+                        fprintf(stderr, " invalid number of CUDA streams for ext GPU. We got %d but expected to be >= 1\n", user_param->cuda_num_ext_streams);
                         return FAILURE;
                     }
                     cuda_num_ext_streams_flag = 0;
                 }
+                else
+                    user_param->cuda_num_ext_streams = 1;
 				#endif
 				if (pkey_flag) {
 					user_param->pkey_index = strtol(optarg,NULL,0);

@@ -453,6 +453,7 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, size_t alignm
                 goto err_free_ctx;
             }
         }
+        printf("Number of ext GPU streams: %d\n", ctx->gpu_ext_num_streams);
             
         error = cuMemHostAlloc((void **)(&ctx->gpu_ext_ptr_cnt), sizeof(cuuint32_t) * CTX_POLL_BATCH, CU_MEMHOSTALLOC_PORTABLE|CU_MEMHOSTALLOC_DEVICEMAP|CU_MEMHOSTALLOC_WRITECOMBINED);
         if (error != CUDA_SUCCESS) {
