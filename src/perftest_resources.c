@@ -259,9 +259,10 @@ static int pp_init_gpu(struct pingpong_context *ctx, size_t _size, size_t alignm
 	CUCHECK(cuDeviceGetAttribute(&pciDeviceID, CU_DEVICE_ATTRIBUTE_PCI_DEVICE_ID, ctx->gpu_device));
 	CUCHECK(cuDeviceGetAttribute(&ctx->gpu_has_uvmfull, CU_DEVICE_ATTRIBUTE_CONCURRENT_MANAGED_ACCESS, ctx->gpu_device));
 	// approximating ATS with DIRECT_MANAGED_MEM_ACCESS_FROM_HOST, so far true on POWER9 only
-#if HAVE_CU_DEVICE_ATTRIBUTE_DIRECT_MANAGED_MEM_ACCESS_FROM_HOST
+#if HAVE_DECL_CU_DEVICE_ATTRIBUTE_DIRECT_MANAGED_MEM_ACCESS_FROM_HOST
 	CUCHECK(cuDeviceGetAttribute(&ctx->gpu_has_ats, CU_DEVICE_ATTRIBUTE_DIRECT_MANAGED_MEM_ACCESS_FROM_HOST, ctx->gpu_device));
 #else
+#warning "CU_DEVICE_ATTRIBUTE_DIRECT_MANAGED_MEM_ACCESS_FROM_HOST is not defined, assuming ATS=0"
 	ctx->gpu_has_ats = 0;
 #endif
         printf("GPU ordinal:%d device:%d name:%s PCI Domain/Bus/Dev: %04x/%02x/%02x ATS:%d\n",
