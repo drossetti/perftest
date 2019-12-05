@@ -3879,6 +3879,21 @@ cleaning:
 /******************************************************************************
  *
  ******************************************************************************/
+sigset_t set;
+int prepared = 0;
+int prepare_infinite_run(struct perftest_parameters *user_param)
+{
+	sigemptyset(&set);
+	sigaddset(&set, SIGALRM);
+	int rc = pthread_sigmask(SIG_BLOCK, &set, NULL);
+	if (rc != 0){
+		printf("error when try to mask alram for signal to thread\n");
+		return FAILURE;
+	}
+	prepared = 1;
+	return 0;
+}
+
 int run_iter_bw_infinitely(struct pingpong_context *ctx,struct perftest_parameters *user_param)
 {
 	uint64_t		totscnt = 0;
@@ -3895,28 +3910,32 @@ int run_iter_bw_infinitely(struct pingpong_context *ctx,struct perftest_paramete
 	struct ibv_wc 		*wc = NULL;
 	int 			num_of_qps = user_param->num_of_qps;
 	int 			return_value = 0;
-	int 			single_thread_handler;
 
 	ALLOCATE(wc ,struct ibv_wc ,CTX_POLL_BATCH);
 	ALLOCATE(scnt_for_qp,uint64_t,user_param->num_of_qps);
 	memset(scnt_for_qp,0,sizeof(uint64_t)*user_param->num_of_qps);
 
-	duration_param=user_param;
-	sigset_t set;
-	sigemptyset(&set);
-	sigaddset(&set, SIGALRM);
-	single_thread_handler = pthread_sigmask(SIG_BLOCK, &set, NULL);
-	if (single_thread_handler != 0){
-		printf("error when try to mask alram for signal to thread\n");
+	pthread_attr_t attr;
+	if (pthread_attr_init(&attr)) {
+		printf("Fail to init attr\n");
 		return FAILURE;
 	}
 
+	duration_param=user_param;
+	if (!prepared) {
+	  printf("WARNING: infinite run should have been prepared\n");
+	  if (prepare_infinite_run(user_param)) {
+	    return FAILURE;
+	  }
+	}
+	
 	pthread_t print_thread;
-	if (pthread_create(&print_thread, NULL, &handle_signal_print_thread,(void *)&set) != 0){
+	printf("spawning handle_signal_print thread\n");
+	if (pthread_create(&print_thread, &attr, &handle_signal_print_thread,(void *)&set) != 0){
 		printf("Fail to create thread \n");
 		return FAILURE;
 	}
-
+	printf("arming alarm of duration %d\n", user_param->duration);
 	alarm(user_param->duration);
 	user_param->iters = 0;
 
@@ -4020,6 +4039,10 @@ int run_iter_bw_infinitely(struct pingpong_context *ctx,struct perftest_paramete
 		}
 	}
 cleaning:
+	pthread_cancel(print_thread);
+	printf("joining thread");
+	void *res;
+	pthread_join(print_thread, &res);
 	free(scnt_for_qp);
 	free(wc);
 	return return_value;
@@ -5216,6 +5239,7 @@ void *handle_signal_print_thread(void *sigmask)
 	sigset_t *set = (sigset_t*)sigmask;
 	int rc;
 	int sig_caught;
+	printf("in %s\n", __FUNCTION__);
 	while(1){
 		rc = sigwait(set, &sig_caught);
 		if (rc != 0){

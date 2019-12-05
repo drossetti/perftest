@@ -505,6 +505,7 @@ int run_iter_bw(struct pingpong_context *ctx,struct perftest_parameters *user_pa
  *
  */
 int run_iter_bw_infinitely(struct pingpong_context *ctx,struct perftest_parameters *user_param);
+int prepare_infinite_run(struct perftest_parameters *user_param);
 
 /* run_iter_bw_infinitely_server
  *

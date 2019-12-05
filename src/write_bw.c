@@ -132,6 +132,13 @@ int main(int argc, char *argv[])
 	/* Allocating arrays needed for the test. */
 	alloc_ctx(&ctx,&user_param);
 
+	if (user_param.test_method == RUN_INFINITELY) {
+	  printf("detected infinite run, pre-masking ALARM signal\n");
+	  if (prepare_infinite_run(&user_param)) {
+	    return FAILURE;
+	  }
+	}
+	
 	/* Create (if necessary) the rdma_cm ids and channel. */
 	if (user_param.work_rdma_cm == ON) {
 
