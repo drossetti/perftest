@@ -1792,9 +1792,10 @@ static void ctx_set_max_inline(struct ibv_context *context,struct perftest_param
 
 		if (user_param->tst ==LAT) {
 #ifdef HAVE_CUDA
-			if (user_param->use_cuda)
-				fprintf(stderr," Inlining of CUDA device memory is not supported, keeping it set to 0B.\n");
-			else
+			if (user_param->use_cuda) {
+				fprintf(stderr," Inlining of CUDA device memory is not supported, setting to 0B.\n");
+				user_param->inline_size = 0;
+			} else
 #endif		    
 			switch(user_param->verb) {
 
