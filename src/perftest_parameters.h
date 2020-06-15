@@ -303,7 +303,17 @@ enum ctx_device {
 	QLOGIC_AH		= 13,
 	CHELSIO_T6		= 14,
 	CONNECTX5		= 15,
-	CONNECTX5EX		= 16
+	CONNECTX5EX		= 16,
+        CONNECTX6               = 17,
+	CONNECTX6DX             = 18,
+	MLX5GENVF               = 19,
+	BLUEFIELD               = 20,
+	BLUEFIELD2              = 21,
+	INTEL_ALL               = 22,
+	NETXTREME               = 23,
+	EFA                     = 24,
+	CONNECTX6LX             = 25,
+	CONNECTX7               = 26
 };
 
 /* Units for rate limiter */
