@@ -1439,7 +1439,7 @@ static void force_dependecies(struct perftest_parameters *user_param)
 
 	#ifdef HAVE_CUDA
 	if (user_param->use_cuda) {
-		if (user_param->tst != BW) {
+		if (user_param->tst != BW && user_param->tst != LAT) {
 			printf(RESULT_LINE);
 			fprintf(stderr," Perftest supports CUDA only in BW tests\n");
 			exit(1);
@@ -1791,7 +1791,11 @@ static void ctx_set_max_inline(struct ibv_context *context,struct perftest_param
 	if (user_param->inline_size == DEF_INLINE) {
 
 		if (user_param->tst ==LAT) {
-
+#ifdef HAVE_CUDA
+			if (user_param->use_cuda)
+				fprintf(stderr," Inlining of CUDA device memory is not supported, keeping it set to 0B.\n");
+			else
+#endif		    
 			switch(user_param->verb) {
 
 				case WRITE: user_param->inline_size = (user_param->connection_type == DC)? DEF_INLINE_DC : DEF_INLINE_WRITE; break;
