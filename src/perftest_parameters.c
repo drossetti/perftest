@@ -1441,7 +1441,7 @@ static void force_dependecies(struct perftest_parameters *user_param)
 	if (user_param->use_cuda) {
 		if (user_param->tst != BW && user_param->tst != LAT) {
 			printf(RESULT_LINE);
-			fprintf(stderr," Perftest supports CUDA only in BW tests\n");
+			fprintf(stderr," Perftest supports CUDA only in BW and latency tests\n");
 			exit(1);
 		}
 	}
