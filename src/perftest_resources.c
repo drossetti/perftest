@@ -4068,8 +4068,7 @@ int run_iter_lat_send(struct pingpong_context *ctx,struct perftest_parameters *u
 		ctx->wr[0].send_flags = 0;
 	}
 	if (user_param->size <= user_param->inline_size) {
-	  printf("size=%d inline_size=%d SEND_INLINE can crash with CUDA\n", (int)user_param->size, (int)user_param->inline_size);
-	  //ctx->wr[0].send_flags |= IBV_SEND_INLINE;
+		ctx->wr[0].send_flags |= IBV_SEND_INLINE;
 	}
 	while (scnt < user_param->iters || rcnt < user_param->iters ||
 			( (user_param->test_type == DURATION && user_param->state != END_STATE))) {
